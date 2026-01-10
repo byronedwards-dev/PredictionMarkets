@@ -235,7 +235,7 @@ export async function GET(request: NextRequest) {
             event_name: name,
             platform: market.platform,
             sport: market.sport,
-            total_volume: 0,
+            total_volume_24h: 0,
             total_volume_all_time: 0,
             market_count: 0,
             has_arb: false,
@@ -247,7 +247,7 @@ export async function GET(request: NextRequest) {
         const group = eventMap.get(key)!;
         group.markets.push(market);
         group.market_count++;
-        group.total_volume += parseFloat(market.volume_24h || '0');
+        group.total_volume_24h += parseFloat(market.volume_24h || '0');
         group.total_volume_all_time += parseFloat(market.volume_all_time || '0');
         
         if (market.arb_id) {

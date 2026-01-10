@@ -113,13 +113,15 @@ function EventCard({ event, isExpanded, onToggle }: {
           
           <div className="flex items-center gap-6">
             <div className="text-right">
-              <span className="text-sm font-semibold text-accent-cyan">{formatVolume(event.total_volume_24h)}</span>
+              <span className="text-sm font-semibold text-accent-cyan">{formatVolume(event.total_volume)}</span>
               <p className="text-gray-500 text-xs">~24h vol</p>
             </div>
-            <div className="text-right">
-              <span className="text-sm font-semibold text-gray-300">{formatVolume(event.total_volume_all_time)}</span>
-              <p className="text-gray-500 text-xs">all-time</p>
-            </div>
+            {event.total_volume_all_time > 0 && (
+              <div className="text-right">
+                <span className="text-sm font-semibold text-gray-300">{formatVolume(event.total_volume_all_time)}</span>
+                <p className="text-gray-500 text-xs">all-time</p>
+              </div>
+            )}
           </div>
         </div>
       </button>
@@ -201,9 +203,13 @@ function EventCard({ event, isExpanded, onToggle }: {
                       </span>
                     </td>
                     <td className="px-4 py-2 text-right">
-                      <span className="text-sm text-gray-400 font-mono">
-                        {formatVolume(parseFloat(market.volume_all_time || '0'))}
-                      </span>
+                      {market.volume_all_time ? (
+                        <span className="text-sm text-gray-400 font-mono">
+                          {formatVolume(parseFloat(market.volume_all_time))}
+                        </span>
+                      ) : (
+                        <span className="text-sm text-gray-600">—</span>
+                      )}
                     </td>
                     <td className="px-4 py-2 text-right">
                       {market.arb_quality ? (
