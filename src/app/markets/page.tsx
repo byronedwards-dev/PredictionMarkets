@@ -116,7 +116,7 @@ function EventCard({ event, isExpanded, onToggle }: {
               <span className="text-sm font-semibold text-accent-cyan">{formatVolume(event.total_volume)}</span>
               <p className="text-gray-500 text-xs">~24h vol</p>
             </div>
-            {event.total_volume_all_time > 0 && (
+            {event.total_volume_all_time && event.total_volume_all_time > 0 && (
               <div className="text-right">
                 <span className="text-sm font-semibold text-gray-300">{formatVolume(event.total_volume_all_time)}</span>
                 <p className="text-gray-500 text-xs">all-time</p>

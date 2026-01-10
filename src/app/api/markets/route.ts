@@ -261,7 +261,7 @@ export async function GET(request: NextRequest) {
       
       // Convert to array and sort by weekly volume (more meaningful than all-time)
       const events = Array.from(eventMap.values())
-        .sort((a, b) => b.total_volume - a.total_volume);
+        .sort((a, b) => b.total_volume_24h - a.total_volume_24h);
       
       // Sort markets within each event by volume
       for (const event of events) {
