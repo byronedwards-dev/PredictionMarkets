@@ -460,4 +460,5 @@ if (isMainModule) {
     });
 }
 
-export { runBackfill, BackfillOptions, BackfillProgress };
+export { runBackfill };
+export type { BackfillOptions, BackfillProgress };
