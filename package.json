@@ -1,0 +1,48 @@
+{
+  "name": "prediction-market-scanner",
+  "version": "0.1.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint",
+    "db:migrate": "node scripts/migrate.js",
+    "jobs:sync": "node scripts/run-sync.js",
+    "jobs:backfill": "npx tsx src/jobs/backfill.ts",
+    "pm2:start": "pm2 start ecosystem.config.js",
+    "pm2:stop": "pm2 stop market-sync",
+    "pm2:logs": "pm2 logs market-sync",
+    "pm2:status": "pm2 status",
+    "db:check": "node scripts/check-db.js",
+    "worker:start": "npx tsx src/worker.ts",
+    "worker:build": "npx tsc src/worker.ts --outDir dist --esModuleInterop --skipLibCheck"
+  },
+  "dependencies": {
+    "@dome-api/sdk": "^0.18.0",
+    "clsx": "^2.1.0",
+    "date-fns": "^3.6.0",
+    "lucide-react": "^0.400.0",
+    "next": "^14.2.0",
+    "node-cron": "^3.0.3",
+    "pg": "^8.11.3",
+    "react": "^18.2.0",
+    "react-dom": "^18.2.0",
+    "recharts": "^2.12.0",
+    "tailwind-merge": "^2.2.0"
+  },
+  "devDependencies": {
+    "@types/node": "^20.11.0",
+    "@types/node-cron": "^3.0.11",
+    "@types/pg": "^8.11.0",
+    "@types/react": "^18.2.0",
+    "@types/react-dom": "^18.2.0",
+    "autoprefixer": "^10.4.17",
+    "eslint": "^8.56.0",
+    "eslint-config-next": "^14.2.0",
+    "postcss": "^8.4.35",
+    "tailwindcss": "^3.4.0",
+    "tsx": "^4.7.0",
+    "typescript": "^5.3.0"
+  }
+}

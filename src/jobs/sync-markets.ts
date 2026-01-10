@@ -1,0 +1,625 @@
+/**
+ * Market Sync Background Job
+ * 
+ * Polls Dome API every 5 minutes to sync market data and detect arbitrage
+ * Run with: npm run jobs:sync
+ */
+
+import { query } from '../lib/db';
+import dome, { PolymarketMarket, KalshiMarket, MatchingMarketPlatform } from '../lib/dome-api';
+import { detectSingleMarketArb, detectCrossPlatformArb, trackArbPersistence, closeStaleArbs, PriceSnapshot } from '../lib/arb-detection';
+import { loadFees } from '../lib/fees';
+
+const SYNC_INTERVAL_MS = (parseInt(process.env.SYNC_INTERVAL_MINUTES || '5') * 60 * 1000);
+const BATCH_SIZE = 10; // Smaller batches to avoid rate limits
+const API_PAGE_SIZE = 100; // Dome API max limit per request
+const MAX_PAGES = 2; // 200 markets per platform (most active by volume)
+const MIN_VOLUME_FOR_PRICE_FETCH = 5000; // Only fetch prices for markets with $5k+ volume
+
+interface SyncStats {
+  marketsUpserted: number;
+  snapshotsTaken: number;
+  arbsDetected: number;
+  arbsClosed: number;
+  errors: string[];
+}
+
+/**
+ * Process items in batches with parallel execution
+ */
+async function processBatch<T, R>(
+  items: T[],
+  batchSize: number,
+  processor: (item: T) => Promise<R>
+): Promise<(R | Error)[]> {
+  const results: (R | Error)[] = [];
+  
+  for (let i = 0; i < items.length; i += batchSize) {
+    const batch = items.slice(i, i + batchSize);
+    const batchResults = await Promise.allSettled(batch.map(processor));
+    
+    for (const result of batchResults) {
+      if (result.status === 'fulfilled') {
+        results.push(result.value);
+      } else {
+        results.push(result.reason instanceof Error ? result.reason : new Error(String(result.reason)));
+      }
+    }
+  }
+  
+  return results;
+}
+
+/**
+ * Upsert a Polymarket market into the database
+ */
+async function upsertPolymarketMarket(market: PolymarketMarket): Promise<number> {
+  // Detect sport from tags
+  let sport: string | null = null;
+  const sportTags = ['nfl', 'nba', 'mlb', 'nhl', 'cfb', 'cbb'];
+  if (market.tags) {
+    for (const tag of market.tags) {
+      if (sportTags.includes(tag.toLowerCase())) {
+        sport = tag.toLowerCase();
+        break;
+      }
+    }
+  }
+  
+  const result = await query<{ id: number }>(
+    `INSERT INTO markets (platform, platform_id, event_id, title, category, sport, status, resolution_date, outcome, token_id_a, token_id_b)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11)
+     ON CONFLICT (platform, platform_id) 
+     DO UPDATE SET 
+       title = EXCLUDED.title,
+       status = EXCLUDED.status,
+       resolution_date = EXCLUDED.resolution_date,
+       outcome = EXCLUDED.outcome,
+       token_id_a = EXCLUDED.token_id_a,
+       token_id_b = EXCLUDED.token_id_b,
+       updated_at = NOW()
+     RETURNING id`,
+    [
+      'polymarket',
+      market.market_slug, // Use market_slug as platform_id
+      market.condition_id,
+      market.title,
+      market.tags.length > 0 ? market.tags[0] : null,
+      sport,
+      market.status,
+      market.end_time ? new Date(market.end_time * 1000) : null,
+      market.winning_side,
+      market.side_a?.id || null, // Store Yes token ID
+      market.side_b?.id || null, // Store No token ID
+    ]
+  );
+  
+  return result.rows[0].id;
+}
+
+/**
+ * Upsert a Kalshi market into the database
+ */
+async function upsertKalshiMarket(market: KalshiMarket): Promise<number> {
+  const result = await query<{ id: number }>(
+    `INSERT INTO markets (platform, platform_id, event_id, title, category, sport, status, resolution_date, outcome)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+     ON CONFLICT (platform, platform_id) 
+     DO UPDATE SET 
+       title = EXCLUDED.title,
+       status = EXCLUDED.status,
+       resolution_date = EXCLUDED.resolution_date,
+       outcome = EXCLUDED.outcome,
+       updated_at = NOW()
+     RETURNING id`,
+    [
+      'kalshi',
+      market.market_ticker, // Use market_ticker as platform_id
+      market.event_ticker,
+      market.title,
+      null, // Kalshi doesn't have tags in same format
+      null, // Sport detection would need to parse title
+      market.status,
+      market.end_time ? new Date(market.end_time * 1000) : null,
+      market.result,
+    ]
+  );
+  
+  return result.rows[0].id;
+}
+
+/**
+ * Insert a price snapshot for a Polymarket market using actual prices
+ */
+async function insertPolymarketSnapshot(
+  marketId: number, 
+  sideAPrice: number, 
+  sideBPrice: number,
+  volume: number
+): Promise<void> {
+  // In binary markets, side_a is typically "Yes" and side_b is "No"
+  // Price represents probability (0-1), so yes_price + no_price should ≈ 1
+  await query(
+    `INSERT INTO price_snapshots (
+      market_id, yes_price, no_price,
+      yes_bid, yes_ask, no_bid, no_ask,
+      yes_bid_size, yes_ask_size, no_bid_size, no_ask_size,
+      volume_24h
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    [
+      marketId,
+      sideAPrice,
+      sideBPrice,
+      sideAPrice * 0.99, // Estimate bid as 1% below mid
+      sideAPrice * 1.01, // Estimate ask as 1% above mid
+      sideBPrice * 0.99,
+      sideBPrice * 1.01,
+      10000, // Default size estimate (USD)
+      10000,
+      10000,
+      10000,
+      volume,
+    ]
+  );
+}
+
+/**
+ * Insert a price snapshot for a Kalshi market
+ */
+async function insertKalshiSnapshot(marketId: number, lastPrice: number, volume24h: number): Promise<void> {
+  // Kalshi last_price is the yes price (0-1)
+  const yesPrice = lastPrice;
+  const noPrice = 1 - lastPrice;
+  
+  await query(
+    `INSERT INTO price_snapshots (
+      market_id, yes_price, no_price,
+      yes_bid, yes_ask, no_bid, no_ask,
+      yes_bid_size, yes_ask_size, no_bid_size, no_ask_size,
+      volume_24h
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+    [
+      marketId,
+      yesPrice,
+      noPrice,
+      yesPrice * 0.99,
+      yesPrice * 1.01,
+      noPrice * 0.99,
+      noPrice * 1.01,
+      5000, // Kalshi typically smaller liquidity
+      5000,
+      5000,
+      5000,
+      volume24h,
+    ]
+  );
+}
+
+/**
+ * Upsert a market pair
+ */
+async function upsertMarketPair(
+  polyMarketSlug: string,
+  kalshiMarketTicker: string,
+  sport: string,
+  gameDate: string
+): Promise<number | null> {
+  // Get internal market IDs
+  const polyMarket = await query<{ id: number }>(
+    'SELECT id FROM markets WHERE platform = $1 AND platform_id = $2',
+    ['polymarket', polyMarketSlug]
+  );
+  
+  const kalshiMarket = await query<{ id: number }>(
+    'SELECT id FROM markets WHERE platform = $1 AND platform_id = $2',
+    ['kalshi', kalshiMarketTicker]
+  );
+  
+  if (polyMarket.rows.length === 0 || kalshiMarket.rows.length === 0) {
+    console.warn(`Market pair incomplete: poly=${polyMarketSlug}, kalshi=${kalshiMarketTicker}`);
+    return null;
+  }
+  
+  const result = await query<{ id: number }>(
+    `INSERT INTO market_pairs (poly_market_id, kalshi_market_id, sport, game_date, match_confidence)
+     VALUES ($1, $2, $3, $4, $5)
+     ON CONFLICT (poly_market_id, kalshi_market_id) DO UPDATE SET
+       match_confidence = EXCLUDED.match_confidence
+     RETURNING id`,
+    [
+      polyMarket.rows[0].id,
+      kalshiMarket.rows[0].id,
+      sport,
+      gameDate,
+      0.95, // High confidence from Dome matching
+    ]
+  );
+  
+  return result.rows[0].id;
+}
+
+/**
+ * Get latest snapshot for a market
+ */
+async function getLatestSnapshot(marketId: number): Promise<PriceSnapshot | null> {
+  const result = await query<{
+    market_id: number;
+    yes_price: string;
+    no_price: string;
+    yes_bid: string;
+    yes_ask: string;
+    no_bid: string;
+    no_ask: string;
+    yes_bid_size: string;
+    yes_ask_size: string;
+    no_bid_size: string;
+    no_ask_size: string;
+    volume_24h: string;
+    platform: string;
+  }>(
+    `SELECT ps.*, m.platform FROM price_snapshots ps
+     JOIN markets m ON m.id = ps.market_id
+     WHERE ps.market_id = $1
+     ORDER BY ps.snapshot_at DESC LIMIT 1`,
+    [marketId]
+  );
+  
+  if (result.rows.length === 0) return null;
+  
+  const row = result.rows[0];
+  return {
+    marketId: row.market_id,
+    platform: row.platform,
+    yesPrice: parseFloat(row.yes_price),
+    noPrice: parseFloat(row.no_price),
+    yesBid: parseFloat(row.yes_bid),
+    yesAsk: parseFloat(row.yes_ask),
+    noBid: parseFloat(row.no_bid),
+    noAsk: parseFloat(row.no_ask),
+    yesBidSize: parseFloat(row.yes_bid_size),
+    yesAskSize: parseFloat(row.yes_ask_size),
+    noBidSize: parseFloat(row.no_bid_size),
+    noAskSize: parseFloat(row.no_ask_size),
+    volume24h: parseFloat(row.volume_24h),
+  };
+}
+
+/**
+ * Main sync function
+ */
+async function syncMarkets(): Promise<SyncStats> {
+  const stats: SyncStats = {
+    marketsUpserted: 0,
+    snapshotsTaken: 0,
+    arbsDetected: 0,
+    arbsClosed: 0,
+    errors: [],
+  };
+  
+  console.log(`\n🔄 Starting market sync at ${new Date().toISOString()}`);
+  
+  // Record sync start
+  const syncResult = await query<{ id: number }>(
+    `INSERT INTO sync_status (sync_type, status) VALUES ('full_sync', 'running') RETURNING id`
+  );
+  const syncId = syncResult.rows[0].id;
+  
+  try {
+    // Load latest fees
+    await loadFees();
+    
+    // 1. Fetch Polymarket markets with pagination
+    console.log('📊 Fetching Polymarket markets...');
+    let polyMarkets: PolymarketMarket[] = [];
+    try {
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const response = await dome.polymarket.getMarkets({
+          status: 'open',
+          min_volume: 5000, // Only markets with $5k+ total volume
+          limit: API_PAGE_SIZE,
+          offset: page * API_PAGE_SIZE,
+        });
+        polyMarkets.push(...response.markets);
+        console.log(`   Page ${page + 1}: ${response.markets.length} markets (total: ${polyMarkets.length})`);
+        
+        // Stop if we got less than a full page
+        if (response.markets.length < API_PAGE_SIZE || !response.pagination.has_more) {
+          break;
+        }
+      }
+      console.log(`   ✓ Found ${polyMarkets.length} Polymarket markets`);
+    } catch (err) {
+      const error = `Polymarket fetch failed: ${err instanceof Error ? err.message : err}`;
+      stats.errors.push(error);
+      console.error(`   ❌ ${error}`);
+    }
+    
+    // 2. Fetch Kalshi markets with pagination
+    console.log('📊 Fetching Kalshi markets...');
+    let kalshiMarkets: KalshiMarket[] = [];
+    try {
+      for (let page = 0; page < MAX_PAGES; page++) {
+        const response = await dome.kalshi.getMarkets({
+          status: 'open',
+          min_volume: 1000, // Only markets with $10+ volume (Kalshi uses cents)
+          limit: API_PAGE_SIZE,
+          offset: page * API_PAGE_SIZE,
+        });
+        kalshiMarkets.push(...response.markets);
+        console.log(`   Page ${page + 1}: ${response.markets.length} markets (total: ${kalshiMarkets.length})`);
+        
+        if (response.markets.length < API_PAGE_SIZE || !response.pagination.has_more) {
+          break;
+        }
+      }
+      console.log(`   ✓ Found ${kalshiMarkets.length} Kalshi markets`);
+    } catch (err) {
+      const error = `Kalshi fetch failed: ${err instanceof Error ? err.message : err}`;
+      stats.errors.push(error);
+      console.error(`   ❌ ${error}`);
+    }
+    
+    // 3. Upsert markets to DB first (fast, sequential)
+    console.log('💾 Upserting Polymarket markets...');
+    const marketIds: Map<string, number> = new Map();
+    const polyMarketsWithIds: Array<{ market: PolymarketMarket; id: number }> = [];
+    
+    for (const market of polyMarkets) {
+      try {
+        const id = await upsertPolymarketMarket(market);
+        marketIds.set(`polymarket:${market.market_slug}`, id);
+        polyMarketsWithIds.push({ market, id });
+        stats.marketsUpserted++;
+      } catch (err) {
+        if (stats.errors.length < 10) {
+          stats.errors.push(`Failed to upsert Poly market ${market.market_slug}: ${err}`);
+        }
+      }
+    }
+    
+    // 4. Filter to high-volume markets only for price fetching (reduces API calls significantly)
+    const highVolumeMarkets = polyMarketsWithIds.filter(({ market }) => 
+      market.volume_total >= MIN_VOLUME_FOR_PRICE_FETCH
+    );
+    console.log(`📈 Fetching prices for ${highVolumeMarkets.length}/${polyMarketsWithIds.length} high-volume Polymarket markets...`);
+    
+    let pricesFetched = 0;
+    await processBatch(highVolumeMarkets, BATCH_SIZE, async ({ market, id }) => {
+      try {
+        // Fetch both sides in parallel
+        const [sideAPrice, sideBPrice] = await Promise.all([
+          dome.polymarket.getMarketPrice(market.side_a.id),
+          dome.polymarket.getMarketPrice(market.side_b.id),
+        ]);
+        
+        await insertPolymarketSnapshot(
+          id, 
+          sideAPrice.price, 
+          sideBPrice.price,
+          market.volume_total
+        );
+        stats.snapshotsTaken++;
+        pricesFetched++;
+        
+        // Log progress every 50 markets
+        if (pricesFetched % 50 === 0) {
+          console.log(`   📊 Progress: ${pricesFetched}/${highVolumeMarkets.length} prices fetched`);
+        }
+        
+        // Detect single-market arb
+        const snapshot: PriceSnapshot = {
+          marketId: id,
+          platform: 'polymarket',
+          yesPrice: sideAPrice.price,
+          noPrice: sideBPrice.price,
+          yesBid: sideAPrice.price * 0.99,
+          yesAsk: sideAPrice.price * 1.01,
+          noBid: sideBPrice.price * 0.99,
+          noAsk: sideBPrice.price * 1.01,
+          yesBidSize: 10000,
+          yesAskSize: 10000,
+          noBidSize: 10000,
+          noAskSize: 10000,
+          volume24h: market.volume_1_week / 7,
+        };
+        
+        const arb = detectSingleMarketArb(snapshot, market.title);
+        if (arb) {
+          await trackArbPersistence(arb);
+          stats.arbsDetected++;
+          console.log(`   🎯 Arb: ${market.title.substring(0, 50)}... (${arb.quality}, ${arb.netSpreadPct.toFixed(2)}%)`);
+        }
+      } catch (priceErr) {
+        if (stats.errors.length < 10) {
+          stats.errors.push(`Price fetch failed for ${market.market_slug}: ${priceErr instanceof Error ? priceErr.message : priceErr}`);
+        }
+      }
+    });
+    
+    // 5. Process Kalshi markets (already have prices, so faster)
+    console.log(`💾 Processing ${kalshiMarkets.length} Kalshi markets...`);
+    
+    await processBatch(kalshiMarkets, BATCH_SIZE * 2, async (market) => {
+      try {
+        const id = await upsertKalshiMarket(market);
+        marketIds.set(`kalshi:${market.market_ticker}`, id);
+        stats.marketsUpserted++;
+        
+        // Kalshi already has last_price in the market data
+        await insertKalshiSnapshot(id, market.last_price, market.volume_24h);
+        stats.snapshotsTaken++;
+        
+        // Detect single-market arb
+        const snapshot: PriceSnapshot = {
+          marketId: id,
+          platform: 'kalshi',
+          yesPrice: market.last_price,
+          noPrice: 1 - market.last_price,
+          yesBid: market.last_price * 0.99,
+          yesAsk: market.last_price * 1.01,
+          noBid: (1 - market.last_price) * 0.99,
+          noAsk: (1 - market.last_price) * 1.01,
+          yesBidSize: 5000,
+          yesAskSize: 5000,
+          noBidSize: 5000,
+          noAskSize: 5000,
+          volume24h: market.volume_24h,
+        };
+        
+        const arb = detectSingleMarketArb(snapshot, market.title);
+        if (arb) {
+          await trackArbPersistence(arb);
+          stats.arbsDetected++;
+          console.log(`   🎯 Arb: ${market.title.substring(0, 50)}... (${arb.quality}, ${arb.netSpreadPct.toFixed(2)}%)`);
+        }
+      } catch (err) {
+        if (stats.errors.length < 20) {
+          stats.errors.push(`Failed to process Kalshi market ${market.market_ticker}: ${err}`);
+        }
+      }
+    });
+    
+    console.log(`   Upserted ${stats.marketsUpserted} markets, took ${stats.snapshotsTaken} snapshots`);
+    
+    // 4. Fetch and process matched market pairs for cross-platform arbs
+    console.log('🔗 Processing cross-platform pairs...');
+    const today = new Date().toISOString().split('T')[0];
+    // Also check tomorrow for games
+    const tomorrow = new Date(Date.now() + 86400000).toISOString().split('T')[0];
+    
+    for (const sport of ['nfl', 'nba', 'mlb', 'cfb'] as const) {
+      for (const date of [today, tomorrow]) {
+        try {
+          const matchingResponse = await dome.matchingMarkets.getBySport(sport, date);
+          const gameKeys = Object.keys(matchingResponse.markets);
+          console.log(`   Found ${gameKeys.length} ${sport.toUpperCase()} pairs for ${date}`);
+          
+          for (const gameKey of gameKeys) {
+            const platforms = matchingResponse.markets[gameKey];
+            
+            // Find Polymarket and Kalshi entries
+            const polyEntry = platforms.find(p => p.platform === 'POLYMARKET') as MatchingMarketPlatform | undefined;
+            const kalshiEntry = platforms.find(p => p.platform === 'KALSHI') as MatchingMarketPlatform | undefined;
+            
+            if (!polyEntry?.market_slug || !kalshiEntry?.market_tickers?.length) continue;
+            
+            // Process first Kalshi market ticker (usually the main one)
+            const kalshiTicker = kalshiEntry.market_tickers[0];
+            
+            const pairId = await upsertMarketPair(
+              polyEntry.market_slug,
+              kalshiTicker,
+              sport,
+              date
+            );
+            
+            if (!pairId) continue;
+            
+            // Get snapshots for both markets and detect cross-platform arb
+            const polyMarketResult = await query<{ id: number; title: string }>(
+              'SELECT id, title FROM markets WHERE platform = $1 AND platform_id = $2',
+              ['polymarket', polyEntry.market_slug]
+            );
+            const kalshiMarketResult = await query<{ id: number; title: string }>(
+              'SELECT id, title FROM markets WHERE platform = $1 AND platform_id = $2',
+              ['kalshi', kalshiTicker]
+            );
+            
+            if (polyMarketResult.rows.length === 0 || kalshiMarketResult.rows.length === 0) continue;
+            
+            const polySnapshot = await getLatestSnapshot(polyMarketResult.rows[0].id);
+            const kalshiSnapshot = await getLatestSnapshot(kalshiMarketResult.rows[0].id);
+            
+            if (!polySnapshot || !kalshiSnapshot) continue;
+            
+            // Detect cross-platform arb
+            const crossArb = detectCrossPlatformArb(
+              polySnapshot,
+              kalshiSnapshot,
+              pairId,
+              polyMarketResult.rows[0].title,
+              kalshiMarketResult.rows[0].title
+            );
+            
+            if (crossArb) {
+              await trackArbPersistence(crossArb);
+              stats.arbsDetected++;
+              console.log(`   🎯 Cross-platform: ${polyMarketResult.rows[0].title.substring(0, 40)}... (${crossArb.quality}, ${crossArb.netSpreadPct.toFixed(2)}%)`);
+            }
+          }
+        } catch (err) {
+          // Sport/date combo might not have matches
+          if (!String(err).includes('Not Found')) {
+            stats.errors.push(`Failed to fetch ${sport} pairs for ${date}: ${err}`);
+          }
+        }
+      }
+    }
+    
+    // 5. Close stale arbs
+    stats.arbsClosed = await closeStaleArbs(10);
+    if (stats.arbsClosed > 0) {
+      console.log(`   Closed ${stats.arbsClosed} stale arbs`);
+    }
+    
+    // Update sync status
+    await query(
+      `UPDATE sync_status SET 
+        completed_at = NOW(), 
+        status = 'completed',
+        markets_synced = $1,
+        arbs_detected = $2
+       WHERE id = $3`,
+      [stats.marketsUpserted, stats.arbsDetected, syncId]
+    );
+    
+    console.log(`\n✅ Sync completed: ${stats.marketsUpserted} markets, ${stats.snapshotsTaken} snapshots, ${stats.arbsDetected} arbs`);
+    if (stats.errors.length > 0) {
+      console.log(`⚠️  ${stats.errors.length} errors occurred`);
+      stats.errors.slice(0, 3).forEach(e => console.log(`   - ${e}`));
+    }
+    
+  } catch (error) {
+    const errorMsg = error instanceof Error ? error.message : String(error);
+    stats.errors.push(errorMsg);
+    
+    await query(
+      `UPDATE sync_status SET 
+        completed_at = NOW(), 
+        status = 'failed',
+        error_message = $1
+       WHERE id = $2`,
+      [errorMsg, syncId]
+    );
+    
+    console.error('❌ Sync failed:', error);
+  }
+  
+  return stats;
+}
+
+/**
+ * Run sync job continuously
+ */
+async function runSyncJob(): Promise<void> {
+  console.log('🚀 Starting Prediction Market Scanner sync job');
+  console.log(`📍 Sync interval: ${SYNC_INTERVAL_MS / 1000 / 60} minutes`);
+  
+  // Initial sync
+  await syncMarkets();
+  
+  // Schedule recurring syncs
+  setInterval(async () => {
+    await syncMarkets();
+  }, SYNC_INTERVAL_MS);
+  
+  // Keep process alive
+  console.log('\n⏰ Waiting for next sync...');
+}
+
+// Run if executed directly
+if (require.main === module) {
+  runSyncJob().catch(console.error);
+}
+
+export { syncMarkets, runSyncJob };

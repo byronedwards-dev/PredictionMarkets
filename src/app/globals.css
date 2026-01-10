@@ -1,0 +1,119 @@
+@import url('https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&family=Space+Grotesk:wght@400;500;600;700&display=swap');
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #0a0e17;
+  --foreground: #e5e7eb;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: 'Space Grotesk', system-ui, sans-serif;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+::-webkit-scrollbar-track {
+  background: #111827;
+}
+
+::-webkit-scrollbar-thumb {
+  background: #374151;
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: #4b5563;
+}
+
+/* Terminal-style glow effects */
+.glow-profit {
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.3);
+}
+
+.glow-warning {
+  box-shadow: 0 0 20px rgba(245, 158, 11, 0.3);
+}
+
+.glow-accent {
+  box-shadow: 0 0 20px rgba(6, 182, 212, 0.2);
+}
+
+/* Animated gradient background */
+.gradient-bg {
+  background: linear-gradient(
+    135deg,
+    #0a0e17 0%,
+    #111827 50%,
+    #0a0e17 100%
+  );
+  background-size: 200% 200%;
+}
+
+/* Grid pattern overlay */
+.grid-pattern {
+  background-image: 
+    linear-gradient(rgba(6, 182, 212, 0.03) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(6, 182, 212, 0.03) 1px, transparent 1px);
+  background-size: 50px 50px;
+}
+
+/* Quality badges */
+.badge-executable {
+  @apply bg-profit-low/20 text-profit-low border border-profit-low/30;
+}
+
+.badge-thin {
+  @apply bg-accent-amber/20 text-accent-amber border border-accent-amber/30;
+}
+
+.badge-theoretical {
+  @apply bg-gray-500/20 text-gray-400 border border-gray-500/30;
+}
+
+/* Data table styles */
+.data-table {
+  @apply w-full text-sm;
+}
+
+.data-table th {
+  @apply px-4 py-3 text-left text-xs font-medium text-gray-400 uppercase tracking-wider bg-terminal-card border-b border-terminal-border;
+}
+
+.data-table td {
+  @apply px-4 py-3 border-b border-terminal-border;
+}
+
+.data-table tbody tr:hover {
+  @apply bg-terminal-hover;
+}
+
+/* Card components */
+.card {
+  @apply bg-terminal-card border border-terminal-border rounded-lg overflow-hidden;
+}
+
+.card-header {
+  @apply px-4 py-3 border-b border-terminal-border;
+}
+
+.card-body {
+  @apply p-4;
+}
+
+/* Stats */
+.stat-value {
+  @apply text-2xl font-bold font-mono;
+}
+
+.stat-label {
+  @apply text-xs text-gray-400 uppercase tracking-wide;
+}
