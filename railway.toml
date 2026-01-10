@@ -3,7 +3,6 @@ builder = "nixpacks"
 
 [deploy]
 startCommand = "npm run worker:start"
-healthcheckPath = "/"
-healthcheckTimeout = 100
+# No healthcheck - this is a background worker, not a web server
 restartPolicyType = "on_failure"
-restartPolicyMaxRetries = 3
+restartPolicyMaxRetries = 10
