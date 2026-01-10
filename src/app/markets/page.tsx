@@ -17,6 +17,7 @@ interface Market {
   yes_bid_size: string | null;
   no_bid_size: string | null;
   volume_24h: string | null;
+  volume_all_time: string | null;
   gross_spread: string | null;
   arb_id: number | null;
   arb_quality: 'executable' | 'thin' | 'theoretical' | null;
@@ -30,6 +31,7 @@ interface EventGroup {
   platform: string;
   sport: string | null;
   total_volume: number;
+  total_volume_all_time: number;
   market_count: number;
   has_arb: boolean;
   best_arb_spread: number | null;
@@ -109,12 +111,15 @@ function EventCard({ event, isExpanded, onToggle }: {
             </div>
           )}
           
-          <div className="text-right">
-            <div className="flex items-center gap-1 text-accent-cyan">
-              <TrendingUp className="w-4 h-4" />
-              <span className="text-sm font-semibold">{formatVolume(event.total_volume)}</span>
+          <div className="flex items-center gap-6">
+            <div className="text-right">
+              <span className="text-sm font-semibold text-accent-cyan">{formatVolume(event.total_volume_24h)}</span>
+              <p className="text-gray-500 text-xs">~24h vol</p>
             </div>
-            <p className="text-gray-500 text-xs">24h volume</p>
+            <div className="text-right">
+              <span className="text-sm font-semibold text-gray-300">{formatVolume(event.total_volume_all_time)}</span>
+              <p className="text-gray-500 text-xs">all-time</p>
+            </div>
           </div>
         </div>
       </button>
@@ -130,7 +135,8 @@ function EventCard({ event, isExpanded, onToggle }: {
                 <th className="px-4 py-2 text-right font-medium">NO</th>
                 <th className="px-4 py-2 text-right font-medium">Sum</th>
                 <th className="px-4 py-2 text-right font-medium">Spread</th>
-                <th className="px-4 py-2 text-right font-medium">Volume</th>
+                <th className="px-4 py-2 text-right font-medium">~24h</th>
+                <th className="px-4 py-2 text-right font-medium">All-Time</th>
                 <th className="px-4 py-2 text-right font-medium">Quality</th>
               </tr>
             </thead>
@@ -150,9 +156,18 @@ function EventCard({ event, isExpanded, onToggle }: {
                     )}
                   >
                     <td className="px-4 py-2">
-                      <p className="text-sm text-gray-300 truncate max-w-xs" title={market.title}>
-                        {market.title}
-                      </p>
+                      <a 
+                        href={`/markets/${market.id}`}
+                        className="group block"
+                        title={market.title}
+                      >
+                        <p className="text-sm text-gray-300 truncate max-w-md group-hover:text-accent-cyan transition-colors">
+                          {market.title}
+                        </p>
+                        <p className="text-xs text-gray-600 group-hover:text-gray-500 hidden sm:block">
+                          Click for details
+                        </p>
+                      </a>
                     </td>
                     <td className="px-4 py-2 text-right">
                       <span className="text-sm text-profit-low font-mono">
@@ -183,6 +198,11 @@ function EventCard({ event, isExpanded, onToggle }: {
                     <td className="px-4 py-2 text-right">
                       <span className="text-sm text-accent-cyan font-mono">
                         {formatVolume(parseFloat(market.volume_24h || '0'))}
+                      </span>
+                    </td>
+                    <td className="px-4 py-2 text-right">
+                      <span className="text-sm text-gray-400 font-mono">
+                        {formatVolume(parseFloat(market.volume_all_time || '0'))}
                       </span>
                     </td>
                     <td className="px-4 py-2 text-right">

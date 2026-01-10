@@ -139,15 +139,16 @@ async function insertSnapshot(
   marketId: number, 
   yesPrice: number, 
   noPrice: number,
-  volume: number
+  volume24h: number,
+  volumeAllTime: number
 ): Promise<void> {
   await query(
     `INSERT INTO price_snapshots (
       market_id, yes_price, no_price,
       yes_bid, yes_ask, no_bid, no_ask,
       yes_bid_size, yes_ask_size, no_bid_size, no_ask_size,
-      volume_24h
-    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12)`,
+      volume_24h, volume_all_time
+    ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13)`,
     [
       marketId,
       yesPrice,
@@ -157,7 +158,8 @@ async function insertSnapshot(
       noPrice * 0.99,
       noPrice * 1.01,
       10000, 10000, 10000, 10000,
-      volume,
+      volume24h,
+      volumeAllTime,
     ]
   );
 }
@@ -232,7 +234,9 @@ async function syncMarkets(): Promise<SyncStats> {
           dome.polymarket.getMarketPrice(market.side_b.id),
         ]);
         
-        await insertSnapshot(id, sideAPrice.price, sideBPrice.price, market.volume_total);
+        // Use volume_1_week/7 as 24h estimate, volume_total as all-time
+        const vol24h = market.volume_1_week ? market.volume_1_week / 7 : 0;
+        await insertSnapshot(id, sideAPrice.price, sideBPrice.price, vol24h, market.volume_total);
         stats.snapshotsTaken++;
         pricesFetched++;
         
@@ -266,7 +270,8 @@ async function syncMarkets(): Promise<SyncStats> {
         const id = await upsertKalshiMarket(market);
         stats.marketsUpserted++;
         
-        await insertSnapshot(id, market.last_price, 1 - market.last_price, market.volume_24h);
+        // Kalshi has actual 24h volume and total volume
+        await insertSnapshot(id, market.last_price, 1 - market.last_price, market.volume_24h, market.volume);
         stats.snapshotsTaken++;
         
         const snapshot: PriceSnapshot = {

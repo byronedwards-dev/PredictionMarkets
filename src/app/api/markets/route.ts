@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 
+// Force dynamic rendering
+export const dynamic = 'force-dynamic';
+
 interface MarketRow {
   id: number;
   platform: string;
@@ -19,6 +22,7 @@ interface MarketRow {
   yes_bid_size: string | null;
   no_bid_size: string | null;
   volume_24h: string | null;
+  volume_all_time: string | null;
   snapshot_at: string | null;
   gross_spread: string | null;
   arb_id: number | null;
@@ -32,7 +36,8 @@ interface EventGroup {
   event_name: string;
   platform: string;
   sport: string | null;
-  total_volume: number;
+  total_volume_24h: number;
+  total_volume_all_time: number;
   market_count: number;
   has_arb: boolean;
   best_arb_spread: number | null;
@@ -125,6 +130,7 @@ export async function GET(request: NextRequest) {
         ps.yes_bid_size,
         ps.no_bid_size,
         ps.volume_24h,
+        ps.volume_all_time,
         ps.snapshot_at,
         (1 - COALESCE(ps.yes_bid, 0) - COALESCE(ps.no_bid, 0)) as gross_spread,
         a.id as arb_id,
@@ -230,6 +236,7 @@ export async function GET(request: NextRequest) {
             platform: market.platform,
             sport: market.sport,
             total_volume: 0,
+            total_volume_all_time: 0,
             market_count: 0,
             has_arb: false,
             best_arb_spread: null,
@@ -241,6 +248,7 @@ export async function GET(request: NextRequest) {
         group.markets.push(market);
         group.market_count++;
         group.total_volume += parseFloat(market.volume_24h || '0');
+        group.total_volume_all_time += parseFloat(market.volume_all_time || '0');
         
         if (market.arb_id) {
           group.has_arb = true;
@@ -251,7 +259,7 @@ export async function GET(request: NextRequest) {
         }
       }
       
-      // Convert to array and sort by total volume
+      // Convert to array and sort by weekly volume (more meaningful than all-time)
       const events = Array.from(eventMap.values())
         .sort((a, b) => b.total_volume - a.total_volume);
       
