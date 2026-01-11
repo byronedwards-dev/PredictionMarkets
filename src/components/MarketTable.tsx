@@ -13,6 +13,7 @@ interface Market {
   yes_bid_size: string;
   no_bid_size: string;
   volume_24h: string;
+  volume_all_time: string | null;
   gross_spread: string;
   arb_id: number | null;
   arb_quality: 'executable' | 'thin' | 'theoretical' | null;
@@ -53,14 +54,14 @@ export function MarketTable({ markets, loading }: MarketTableProps) {
               <th className="text-right">Gross Spread</th>
               <th className="text-right">Net Spread</th>
               <th className="text-right">Deployable</th>
-              <th className="text-right">Volume 24h</th>
+              <th className="text-right">Volume</th>
               <th>Quality</th>
             </tr>
           </thead>
           <tbody>
             {markets.length === 0 ? (
               <tr>
-                <td colSpan={11} className="text-center py-8 text-gray-500">
+                <td colSpan={12} className="text-center py-8 text-gray-500">
                   No markets found
                 </td>
               </tr>
@@ -72,7 +73,8 @@ export function MarketTable({ markets, loading }: MarketTableProps) {
                 const grossSpread = parseFloat(market.gross_spread) || 0;
                 const netSpread = market.net_spread_pct ? parseFloat(market.net_spread_pct) : null;
                 const maxDeployable = market.max_deployable_usd ? parseFloat(market.max_deployable_usd) : null;
-                const volume = parseFloat(market.volume_24h) || 0;
+                const volume24h = parseFloat(market.volume_24h) || 0;
+                const volumeAllTime = market.volume_all_time ? parseFloat(market.volume_all_time) : null;
                 
                 const hasArb = market.arb_id !== null;
                 
@@ -95,8 +97,13 @@ export function MarketTable({ markets, loading }: MarketTableProps) {
                         {market.platform === 'polymarket' ? 'POLY' : 'KALSHI'}
                       </span>
                     </td>
-                    <td className="max-w-xs truncate" title={market.title}>
-                      {market.title}
+                    <td className="max-w-xs">
+                      <div className="group relative">
+                        <div className="truncate">{market.title}</div>
+                        <div className="absolute left-0 top-full z-10 mt-1 px-2 py-1 text-xs text-white bg-gray-900 rounded border border-gray-700 opacity-0 group-hover:opacity-100 pointer-events-none transition-opacity whitespace-normal max-w-md break-words shadow-lg">
+                          {market.title}
+                        </div>
+                      </div>
                     </td>
                     <td>
                       {market.sport ? (
@@ -137,8 +144,13 @@ export function MarketTable({ markets, loading }: MarketTableProps) {
                     <td className="text-right font-mono">
                       {maxDeployable !== null ? formatCurrency(maxDeployable, 0) : '-'}
                     </td>
-                    <td className="text-right font-mono text-gray-400">
-                      {formatCurrency(volume, 0)}
+                    <td className="text-right font-mono">
+                      <div className="flex flex-col items-end gap-0.5">
+                        <span className="text-accent-cyan">{formatCurrency(volume24h, 0)}</span>
+                        {volumeAllTime !== null && volumeAllTime > 0 && (
+                          <span className="text-gray-500 text-xs">{formatCurrency(volumeAllTime, 0)}</span>
+                        )}
+                      </div>
                     </td>
                     <td>
                       {market.arb_quality ? (

@@ -79,6 +79,10 @@ const THRESHOLDS = {
   THIN_MIN_DEPLOY: 100, // $100-$999
 };
 
+function isValidPrice(p: number | null | undefined): p is number {
+  return typeof p === 'number' && p > 0 && p < 1 && Number.isFinite(p);
+}
+
 /**
  * Classify arb quality based on net spread and deployable capital
  */
@@ -106,6 +110,11 @@ export function detectSingleMarketArb(
   snapshot: PriceSnapshot,
   marketTitle: string
 ): SingleMarketArb | null {
+  // Guard invalid prices
+  if (!isValidPrice(snapshot.yesBid) || !isValidPrice(snapshot.noBid)) {
+    return null;
+  }
+  
   // Use BID prices (what you can actually buy at)
   const sum = snapshot.yesBid + snapshot.noBid;
   const grossSpread = 1 - sum;
@@ -160,6 +169,16 @@ export function detectCrossPlatformArb(
   polyTitle: string,
   kalshiTitle: string
 ): CrossPlatformArb | null {
+  // Guard invalid prices
+  if (
+    !isValidPrice(polySnapshot.yesBid) ||
+    !isValidPrice(polySnapshot.noBid) ||
+    !isValidPrice(kalshiSnapshot.yesBid) ||
+    !isValidPrice(kalshiSnapshot.noBid)
+  ) {
+    return null;
+  }
+
   // Get current fees
   const polyFee = getTotalFee('polymarket');
   const kalshiFee = getTotalFee('kalshi');

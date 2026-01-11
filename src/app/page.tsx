@@ -10,7 +10,9 @@ import {
   DollarSign, 
   Activity, 
   RefreshCcw,
-  AlertCircle
+  AlertCircle,
+  Database,
+  Layers
 } from 'lucide-react';
 import { formatCurrency, formatPercent, formatRelativeTime } from '@/lib/utils';
 
@@ -41,6 +43,16 @@ interface Stats {
     takerFeePct: number;
     lastVerified: string | null;
   }[];
+  snapshots: {
+    total: number;
+    today: number;
+    backfill: number;
+  };
+  events: {
+    total: number;
+    active: number;
+    closed: number;
+  };
 }
 
 interface Arb {
@@ -134,12 +146,26 @@ export default function Dashboard() {
         )}
 
         {/* Stats Grid */}
-        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4 mb-8">
+        <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 mb-8">
           <StatCard
             title="Total Markets"
             value={stats?.markets.total || 0}
             subtitle={`${stats?.markets.polymarket || 0} Poly · ${stats?.markets.kalshi || 0} Kalshi`}
             icon={TrendingUp}
+            variant="accent"
+          />
+          <StatCard
+            title="Events"
+            value={stats?.events?.active || 0}
+            subtitle={`${stats?.events?.closed || 0} closed · ${stats?.events?.total || 0} total`}
+            icon={Layers}
+            variant="accent"
+          />
+          <StatCard
+            title="Data Points"
+            value={(stats?.snapshots?.total || 0).toLocaleString()}
+            subtitle={`+${(stats?.snapshots?.today || 0).toLocaleString()} today`}
+            icon={Database}
             variant="accent"
           />
           <StatCard

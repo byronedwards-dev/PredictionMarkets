@@ -7,6 +7,8 @@
     "build": "next build",
     "start": "next start",
     "lint": "next lint",
+    "test": "jest",
+    "test:watch": "jest --watch",
     "db:migrate": "node scripts/migrate.js",
     "jobs:sync": "node scripts/run-sync.js",
     "jobs:backfill": "npx tsx src/jobs/backfill.ts",
@@ -32,6 +34,7 @@
     "tailwind-merge": "^2.2.0"
   },
   "devDependencies": {
+    "@types/jest": "^30.0.0",
     "@types/node": "^20.11.0",
     "@types/node-cron": "^3.0.11",
     "@types/pg": "^8.11.0",
@@ -40,8 +43,10 @@
     "autoprefixer": "^10.4.17",
     "eslint": "^8.56.0",
     "eslint-config-next": "^14.2.0",
+    "jest": "^30.2.0",
     "postcss": "^8.4.35",
     "tailwindcss": "^3.4.0",
+    "ts-jest": "^29.4.6",
     "tsx": "^4.7.0",
     "typescript": "^5.3.0"
   }

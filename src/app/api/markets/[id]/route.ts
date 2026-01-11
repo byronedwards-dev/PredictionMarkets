@@ -55,11 +55,11 @@ export async function GET(
 
     const market = marketResult.rows[0];
 
-    // Get time range from query params (default: last 7 days)
+    // Get time range from query params (default: last 24 hours)
     const searchParams = request.nextUrl.searchParams;
-    const days = parseInt(searchParams.get('days') || '7');
+    const hours = parseInt(searchParams.get('hours') || '24');
     const endDate = new Date();
-    const startDate = new Date(endDate.getTime() - days * 24 * 60 * 60 * 1000);
+    const startDate = new Date(endDate.getTime() - hours * 60 * 60 * 1000);
 
     // Fetch price history
     const snapshotsResult = await query<PriceSnapshotRow>(
@@ -116,7 +116,7 @@ export async function GET(
       current: latestResult.rows[0] || null,
       history: snapshotsResult.rows,
       timeRange: {
-        days,
+        hours,
         start: startDate.toISOString(),
         end: endDate.toISOString(),
         snapshotCount: snapshotsResult.rows.length,

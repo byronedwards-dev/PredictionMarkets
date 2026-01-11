@@ -122,6 +122,7 @@ CREATE TABLE IF NOT EXISTS price_snapshots (
     
     -- Aggregate metrics
     volume_24h DECIMAL(20, 2),
+    volume_all_time DECIMAL(20, 2),
     open_interest DECIMAL(20, 2),
     
     -- Backfill tracking

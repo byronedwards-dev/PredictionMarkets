@@ -40,7 +40,7 @@ interface MarketData {
   current: PriceSnapshot | null;
   history: PriceSnapshot[];
   timeRange: {
-    days: number;
+    hours: number;
     start: string;
     end: string;
     snapshotCount: number;
@@ -73,13 +73,13 @@ export default function MarketDetailPage() {
   const [data, setData] = useState<MarketData | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [timeRange, setTimeRange] = useState(7);
+  const [timeRange, setTimeRange] = useState(24); // Default to 24h
 
   useEffect(() => {
     const fetchData = async () => {
       try {
         setLoading(true);
-        const res = await fetch(`/api/markets/${params.id}?days=${timeRange}`);
+        const res = await fetch(`/api/markets/${params.id}?hours=${timeRange}`);
         
         if (!res.ok) {
           if (res.status === 404) {
@@ -107,14 +107,23 @@ export default function MarketDetailPage() {
   }, [params.id, timeRange]);
 
   // Transform history for charts
-  const chartData = data?.history.map(snapshot => ({
-    time: formatShortDate(snapshot.snapshot_at),
-    timestamp: new Date(snapshot.snapshot_at).getTime(),
-    yes: parseFloat(snapshot.yes_price) * 100,
-    no: parseFloat(snapshot.no_price) * 100,
-    volume24h: parseFloat(snapshot.volume_24h || '0'),
-    volumeAllTime: parseFloat(snapshot.volume_all_time || '0'),
-  })) || [];
+  const chartData = data?.history.map(snapshot => {
+    const yesPrice = parseFloat(snapshot.yes_price);
+    const noPrice = parseFloat(snapshot.no_price);
+    const yesBid = parseFloat(snapshot.yes_bid || snapshot.yes_price);
+    const noBid = parseFloat(snapshot.no_bid || snapshot.no_price);
+    const spread = 1 - yesBid - noBid; // Gross spread
+    
+    return {
+      time: formatShortDate(snapshot.snapshot_at),
+      timestamp: new Date(snapshot.snapshot_at).getTime(),
+      yes: yesPrice * 100,
+      no: noPrice * 100,
+      spread: spread * 100, // Spread as percentage
+      volume24h: parseFloat(snapshot.volume_24h || '0'),
+      volumeAllTime: parseFloat(snapshot.volume_all_time || '0'),
+    };
+  }) || [];
 
   if (loading) {
     return (
@@ -261,18 +270,18 @@ export default function MarketDetailPage() {
         <div className="flex items-center gap-2 mb-4">
           <Clock className="w-4 h-4 text-gray-400" />
           <span className="text-gray-400 text-sm">Time Range:</span>
-          {[1, 7, 30, 90].map(days => (
+          {[1, 24, 168, 720].map(hours => (
             <button
-              key={days}
-              onClick={() => setTimeRange(days)}
+              key={hours}
+              onClick={() => setTimeRange(hours)}
               className={cn(
                 'px-3 py-1 rounded text-sm transition-colors',
-                timeRange === days
+                timeRange === hours
                   ? 'bg-accent-cyan/20 text-accent-cyan'
                   : 'bg-terminal-card text-gray-400 hover:text-white'
               )}
             >
-              {days === 1 ? '24h' : `${days}d`}
+              {hours === 1 ? '1h' : hours === 24 ? '24h' : hours === 168 ? '7d' : '30d'}
             </button>
           ))}
         </div>
@@ -320,6 +329,46 @@ export default function MarketDetailPage() {
                       dataKey="no" 
                       name="NO" 
                       stroke="#ef4444" 
+                      strokeWidth={2}
+                      dot={false}
+                    />
+                  </LineChart>
+                </ResponsiveContainer>
+              </div>
+            </div>
+
+            {/* Spread Chart */}
+            <div className="p-4 rounded-lg bg-terminal-card border border-terminal-border">
+              <h3 className="text-white font-medium mb-4">Spread Over Time</h3>
+              <div className="h-48">
+                <ResponsiveContainer width="100%" height="100%">
+                  <LineChart data={chartData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#2a2a3c" />
+                    <XAxis 
+                      dataKey="time" 
+                      stroke="#6b7280"
+                      tick={{ fill: '#6b7280', fontSize: 12 }}
+                    />
+                    <YAxis 
+                      stroke="#6b7280"
+                      tick={{ fill: '#6b7280', fontSize: 12 }}
+                      domain={[0, 10]}
+                      tickFormatter={(v) => `${v.toFixed(1)}%`}
+                    />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: '#1a1a2e',
+                        border: '1px solid #2a2a3c',
+                        borderRadius: '8px',
+                      }}
+                      labelStyle={{ color: '#9ca3af' }}
+                      formatter={(value: number) => [`${value.toFixed(2)}%`, 'Spread']}
+                    />
+                    <Line 
+                      type="monotone" 
+                      dataKey="spread" 
+                      name="Gross Spread" 
+                      stroke="#f59e0b" 
                       strokeWidth={2}
                       dot={false}
                     />

@@ -30,7 +30,7 @@ interface EventGroup {
   event_name: string;
   platform: string;
   sport: string | null;
-  total_volume: number;
+  total_volume_24h: number;
   total_volume_all_time: number;
   market_count: number;
   has_arb: boolean;
@@ -41,11 +41,13 @@ interface EventGroup {
 interface Filters {
   platform: string;
   sport: string;
+  status: string;
   hasArb: boolean;
   minVolume: string;
 }
 
-function formatVolume(volume: number): string {
+function formatVolume(volume: number | null | undefined): string {
+  if (volume == null || isNaN(volume)) return '$0';
   if (volume >= 1_000_000) return `$${(volume / 1_000_000).toFixed(1)}M`;
   if (volume >= 1_000) return `$${(volume / 1_000).toFixed(0)}K`;
   return `$${volume.toFixed(0)}`;
@@ -113,7 +115,7 @@ function EventCard({ event, isExpanded, onToggle }: {
           
           <div className="flex items-center gap-6">
             <div className="text-right">
-              <span className="text-sm font-semibold text-accent-cyan">{formatVolume(event.total_volume)}</span>
+              <span className="text-sm font-semibold text-accent-cyan">{formatVolume(event.total_volume_24h)}</span>
               <p className="text-gray-500 text-xs">~24h vol</p>
             </div>
             {event.total_volume_all_time && event.total_volume_all_time > 0 && (
@@ -245,6 +247,7 @@ export default function MarketsPage() {
   const [filters, setFilters] = useState<Filters>({
     platform: '',
     sport: '',
+    status: 'open',
     hasArb: false,
     minVolume: '',
   });
@@ -258,6 +261,7 @@ export default function MarketsPage() {
         const params = new URLSearchParams();
         if (filters.platform) params.set('platform', filters.platform);
         if (filters.sport) params.set('sport', filters.sport);
+        if (filters.status) params.set('status', filters.status);
         if (filters.hasArb) params.set('hasArb', 'true');
         if (filters.minVolume) params.set('minVolume', filters.minVolume);
         params.set('limit', '200');
@@ -309,12 +313,13 @@ export default function MarketsPage() {
     setFilters({
       platform: '',
       sport: '',
+      status: 'open',
       hasArb: false,
       minVolume: '',
     });
   };
 
-  const hasActiveFilters = filters.platform || filters.sport || filters.hasArb || filters.minVolume;
+  const hasActiveFilters = filters.platform || filters.sport || filters.status !== 'open' || filters.hasArb || filters.minVolume;
 
   return (
     <div className="min-h-screen">
@@ -370,7 +375,7 @@ export default function MarketsPage() {
                 </button>
               )}
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
               {/* Platform */}
               <div>
                 <label className="block text-xs text-gray-400 mb-1.5">Platform</label>
@@ -398,6 +403,20 @@ export default function MarketsPage() {
                   <option value="nba">NBA</option>
                   <option value="mlb">MLB</option>
                   <option value="nhl">NHL</option>
+                </select>
+              </div>
+              
+              {/* Status */}
+              <div>
+                <label className="block text-xs text-gray-400 mb-1.5">Status</label>
+                <select
+                  value={filters.status}
+                  onChange={(e) => setFilters({ ...filters, status: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg bg-terminal-bg border border-terminal-border text-white text-sm focus:outline-none focus:border-accent-cyan"
+                >
+                  <option value="open">Open</option>
+                  <option value="closed">Closed</option>
+                  <option value="">All</option>
                 </select>
               </div>
               

@@ -60,9 +60,37 @@ export async function GET() {
       last_verified_at: Date;
     }>(`SELECT platform, taker_fee_pct, last_verified_at FROM platform_config`);
 
+    // Get total snapshots count
+    const snapshotStats = await query<{
+      total: string;
+      today: string;
+      backfill: string;
+    }>(`
+      SELECT 
+        COUNT(*)::TEXT as total,
+        COUNT(*) FILTER (WHERE snapshot_at >= CURRENT_DATE)::TEXT as today,
+        COUNT(*) FILTER (WHERE is_backfill = true)::TEXT as backfill
+      FROM price_snapshots
+    `);
+
+    // Get event counts (unique event groupings)
+    const eventStats = await query<{
+      total_events: string;
+      active_events: string;
+      closed_events: string;
+    }>(`
+      SELECT 
+        COUNT(DISTINCT COALESCE(event_id, platform_id))::TEXT as total_events,
+        COUNT(DISTINCT COALESCE(event_id, platform_id)) FILTER (WHERE status = 'open')::TEXT as active_events,
+        COUNT(DISTINCT COALESCE(event_id, platform_id)) FILTER (WHERE status != 'open')::TEXT as closed_events
+      FROM markets
+    `);
+
     const markets = marketStats.rows[0];
     const arbs = arbStats.rows[0];
     const sync = lastSync.rows[0];
+    const snapshots = snapshotStats.rows[0];
+    const events = eventStats.rows[0];
 
     return NextResponse.json({
       markets: {
@@ -91,6 +119,16 @@ export async function GET() {
         takerFeePct: parseFloat(f.taker_fee_pct),
         lastVerified: f.last_verified_at,
       })),
+      snapshots: {
+        total: parseInt(snapshots.total) || 0,
+        today: parseInt(snapshots.today) || 0,
+        backfill: parseInt(snapshots.backfill) || 0,
+      },
+      events: {
+        total: parseInt(events.total_events) || 0,
+        active: parseInt(events.active_events) || 0,
+        closed: parseInt(events.closed_events) || 0,
+      },
     });
   } catch (error) {
     console.error('Stats API error:', error);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
+import { extractEventName } from '@/lib/data-transforms';
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
@@ -42,68 +43,6 @@ interface EventGroup {
   has_arb: boolean;
   best_arb_spread: number | null;
   markets: MarketRow[];
-}
-
-/**
- * Extract event name from market title for grouping
- */
-function extractEventName(title: string, platform: string, eventId: string | null): { key: string; name: string } {
-  // Kalshi: Use event_id directly (e.g., KXSB-26 → "Super Bowl 2026")
-  if (platform === 'kalshi' && eventId) {
-    // Parse Kalshi event patterns
-    const kalshiPatterns: Record<string, string> = {
-      'KXSB': 'Super Bowl',
-      'KXNCAAF': 'College Football Playoff',
-      'KXNBACHAMP': 'NBA Championship',
-      'KXNFLGAME': 'NFL Game',
-      'KXNBAGAME': 'NBA Game',
-      'KXBTCMAXY': 'Bitcoin Maximum',
-      'KXBTCMINY': 'Bitcoin Minimum',
-      'KXETHMAXY': 'Ethereum Maximum',
-      'KXRATECUTCOUNT': 'Fed Rate Cuts',
-      'KXLLM': 'AI Models',
-    };
-    
-    for (const [prefix, name] of Object.entries(kalshiPatterns)) {
-      if (eventId.startsWith(prefix)) {
-        return { key: eventId, name: `${name} (${eventId})` };
-      }
-    }
-    return { key: eventId, name: eventId };
-  }
-  
-  // Polymarket: Extract event from title patterns
-  const patterns = [
-    // Presidential elections
-    { regex: /(\d{4}) (Democratic|Republican) presidential (nomination|primary)/i, group: '$1 $2 Presidential $3' },
-    { regex: /(\d{4}) US [Pp]residential [Ee]lection/i, group: '$1 US Presidential Election' },
-    // Sports championships
-    { regex: /Super Bowl (\d{4})/i, group: 'Super Bowl $1' },
-    { regex: /(\d{4}) (NBA|NFL|MLB|NHL) (Finals|Championship|Playoffs)/i, group: '$1 $2 $3' },
-    { regex: /(\d{4})[–-](\d{2,4}) (English Premier League|Champions League|La Liga|Serie A|Bundesliga)/i, group: '$1-$2 $3' },
-    { regex: /(\d{4}) (NBA|NFL) (Finals|Championship)/i, group: '$1 $2 $3' },
-    // Fed/Economic
-    { regex: /(Fed|Federal Reserve).*(rate|interest)/i, group: 'Federal Reserve Rates' },
-    { regex: /Trump.*Fed/i, group: 'Trump & Federal Reserve' },
-    // Crypto
-    { regex: /(Bitcoin|BTC).*(price|\$)/i, group: 'Bitcoin Price' },
-    { regex: /(Ethereum|ETH).*(price|\$)/i, group: 'Ethereum Price' },
-  ];
-  
-  for (const { regex, group } of patterns) {
-    const match = title.match(regex);
-    if (match) {
-      let eventName = group;
-      for (let i = 1; i < match.length; i++) {
-        eventName = eventName.replace(`$${i}`, match[i]);
-      }
-      return { key: eventName.toLowerCase().replace(/\s+/g, '-'), name: eventName };
-    }
-  }
-  
-  // Default: Use first meaningful part of title (up to first question mark or 50 chars)
-  const shortTitle = title.split('?')[0].substring(0, 60).trim();
-  return { key: `single-${platform}-${shortTitle.toLowerCase().replace(/\s+/g, '-').substring(0, 30)}`, name: shortTitle };
 }
 
 export async function GET(request: NextRequest) {
@@ -175,6 +114,13 @@ export async function GET(request: NextRequest) {
       sql += ` AND a.id IS NOT NULL`;
     }
 
+    // Filter out effectively resolved markets (price at ~0% or ~100%)
+    // Markets with YES price >= 98% or <= 2% are essentially decided
+    const hideResolved = searchParams.get('hideResolved') !== 'false';
+    if (hideResolved && status === 'open') {
+      sql += ` AND (ps.yes_price IS NULL OR (ps.yes_price > 0.02 AND ps.yes_price < 0.98))`;
+    }
+
     // Order by volume for initial fetch
     sql += ` ORDER BY ps.volume_24h DESC NULLS LAST`;
     sql += ` LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
@@ -217,6 +163,9 @@ export async function GET(request: NextRequest) {
     }
     if (hasArb === 'true') {
       countSql += ` AND a.id IS NOT NULL`;
+    }
+    if (hideResolved && status === 'open') {
+      countSql += ` AND (ps.yes_price IS NULL OR (ps.yes_price > 0.02 AND ps.yes_price < 0.98))`;
     }
 
     const countResult = await query<{ total: string }>(countSql, countParams);
@@ -265,8 +214,9 @@ export async function GET(request: NextRequest) {
       
       // Sort markets within each event by volume
       for (const event of events) {
-        event.markets.sort((a, b) => 
-          parseFloat(b.volume_24h || '0') - parseFloat(a.volume_24h || '0')
+        // Order markets within an event by YES (highest first)
+        event.markets.sort((a, b) =>
+          parseFloat(b.yes_bid || b.yes_price || '0') - parseFloat(a.yes_bid || a.yes_price || '0')
         );
       }
       

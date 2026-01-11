@@ -114,13 +114,16 @@ export interface MatchingMarketsResponse {
 }
 
 // ============================================
-// Rate Limiting (Dev tier: 100 QPS, 500/10sec)
+// Rate Limiting (configurable via env vars)
 // ============================================
+// Dev tier:  100 QPS, 500/10sec
+// Pro tier:  500 QPS, 2500/10sec (example - check your dashboard)
+// Set DOME_RATE_LIMIT_QPS and DOME_RATE_LIMIT_WINDOW in .env.local
 
 // Sliding window rate limiter
 const WINDOW_SIZE_MS = 10000; // 10 second window
-const MAX_REQUESTS_PER_WINDOW = 480; // Stay under 500/10sec limit
-const MAX_REQUESTS_PER_SECOND = 90; // Stay under 100 QPS limit
+const MAX_REQUESTS_PER_WINDOW = parseInt(process.env.DOME_RATE_LIMIT_WINDOW || '480'); // Default: Dev tier (500/10sec - buffer)
+const MAX_REQUESTS_PER_SECOND = parseInt(process.env.DOME_RATE_LIMIT_QPS || '90'); // Default: Dev tier (100 QPS - buffer)
 
 const requestTimestamps: number[] = [];
 let lastSecondCount = 0;
