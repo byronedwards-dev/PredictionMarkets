@@ -167,6 +167,8 @@ function SuggestionCard({
   );
 }
 
+const MIN_VOLUME_WARNING = 1000; // Warn if volume below $1k
+
 function ConfirmedCard({ 
   link, 
   onUnlink,
@@ -177,13 +179,16 @@ function ConfirmedCard({
   loading: boolean;
 }) {
   const priceDiff = Math.abs(link.polyYesPrice - link.kalshiYesPrice) * 100;
+  const hasLowVolume = link.polyVolume < MIN_VOLUME_WARNING || link.kalshiVolume < MIN_VOLUME_WARNING;
+  const hasExtremePrice = link.polyYesPrice >= 0.99 || link.polyYesPrice <= 0.01 || 
+                          link.kalshiYesPrice >= 0.99 || link.kalshiYesPrice <= 0.01;
 
   return (
-    <div className="card p-4">
+    <div className={`card p-4 ${hasLowVolume || hasExtremePrice ? 'border-yellow-500/50' : ''}`}>
       <div className="flex items-start gap-4">
-        {/* Link icon */}
-        <div className="p-2 rounded-lg bg-profit-low/20">
-          <Link2 className="w-5 h-5 text-profit-mid" />
+        {/* Link icon with warning state */}
+        <div className={`p-2 rounded-lg ${hasLowVolume || hasExtremePrice ? 'bg-yellow-500/20' : 'bg-profit-low/20'}`}>
+          <Link2 className={`w-5 h-5 ${hasLowVolume || hasExtremePrice ? 'text-yellow-400' : 'text-profit-mid'}`} />
         </div>
 
         {/* Markets */}
@@ -218,6 +223,14 @@ function ConfirmedCard({
           {priceDiff > 1 && (
             <div className="mt-2 text-xs text-gray-400">
               Price difference: <span className="text-yellow-400 font-mono">{priceDiff.toFixed(1)}¢</span>
+            </div>
+          )}
+          
+          {/* Low volume / bad data warning */}
+          {(hasLowVolume || hasExtremePrice) && (
+            <div className="mt-2 text-xs text-yellow-400 flex items-center gap-1">
+              ⚠️ {hasLowVolume ? 'Low volume on one side' : 'Extreme price (possible bad data)'}
+              {' '}- consider unlinking
             </div>
           )}
         </div>

@@ -4,6 +4,9 @@ import { calculateSimilarity, findBestMatches, isElectionRelated } from '@/lib/f
 
 export const dynamic = 'force-dynamic';
 
+// Minimum volume for a market to be considered as a match candidate
+const MIN_VOLUME_FOR_MATCHING = 1000; // $1,000 minimum
+
 interface MarketRow {
   id: number;
   platform: string;
@@ -134,9 +137,12 @@ export async function GET(request: NextRequest) {
       LIMIT 500
     `);
 
-    // Filter to election-related markets
+    // Filter to election-related markets with minimum volume for Kalshi
     const polyElection = polyMarkets.rows.filter(m => isElectionRelated(m.title));
-    const kalshiElection = kalshiMarkets.rows.filter(m => isElectionRelated(m.title));
+    const kalshiElection = kalshiMarkets.rows.filter(m => 
+      isElectionRelated(m.title) && 
+      parseFloat(m.volume_all_time || '0') >= MIN_VOLUME_FOR_MATCHING
+    );
 
     // Build suggestions for unmatched Polymarket markets
     const suggestions: Array<{
