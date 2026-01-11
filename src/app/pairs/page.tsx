@@ -33,6 +33,11 @@ interface Pair {
     direction: string | null;
     priceDiff: number | null;
   };
+  alignment?: {
+    sidesInverted: boolean;
+    polyTeam1: string | null;
+    kalshiTeam1: string | null;
+  };
 }
 
 interface PairsResponse {
@@ -59,12 +64,17 @@ function PriceCell({ price, label, highlight }: { price: number; label: string; 
 }
 
 function PairCard({ pair }: { pair: Pair }) {
-  const priceDiff = pair.polymarket.yesPrice - pair.kalshi.yesPrice;
+  // Use aligned prices for comparison (Kalshi may be inverted)
+  const sidesInverted = pair.alignment?.sidesInverted || false;
+  const effectiveKalshiYes = sidesInverted ? pair.kalshi.noPrice : pair.kalshi.yesPrice;
+  const effectiveKalshiNo = sidesInverted ? pair.kalshi.yesPrice : pair.kalshi.noPrice;
+  
+  const priceDiff = pair.polymarket.yesPrice - effectiveKalshiYes;
   const priceDiffPct = Math.abs(priceDiff) * 100;
   
-  // Determine which side has better prices
-  const polyYesCheaper = pair.polymarket.yesPrice < pair.kalshi.yesPrice;
-  const polyNoCheaper = pair.polymarket.noPrice < pair.kalshi.noPrice;
+  // Determine which side has better prices (using aligned prices)
+  const polyYesCheaper = pair.polymarket.yesPrice < effectiveKalshiYes;
+  const polyNoCheaper = pair.polymarket.noPrice < effectiveKalshiNo;
   
   const hasSpread = pair.spread.value !== null && pair.spread.value > 0;
   
@@ -81,6 +91,11 @@ function PairCard({ pair }: { pair: Pair }) {
           {pair.gameDate && (
             <span className="text-xs text-gray-500 ml-2">
               {new Date(pair.gameDate).toLocaleDateString()}
+            </span>
+          )}
+          {sidesInverted && (
+            <span className="ml-2 text-xs px-2 py-0.5 rounded bg-yellow-500/20 text-yellow-400">
+              ⟳ Sides aligned
             </span>
           )}
         </div>
@@ -146,13 +161,13 @@ function PairCard({ pair }: { pair: Pair }) {
           <div className="flex justify-around">
             <PriceCell 
               price={pair.kalshi.yesPrice} 
-              label="YES"
-              highlight={!polyYesCheaper ? 'low' : null}
+              label={sidesInverted ? "YES (≈Poly NO)" : "YES"}
+              highlight={sidesInverted ? (!polyNoCheaper ? 'low' : null) : (!polyYesCheaper ? 'low' : null)}
             />
             <PriceCell 
               price={pair.kalshi.noPrice} 
-              label="NO"
-              highlight={!polyNoCheaper ? 'low' : null}
+              label={sidesInverted ? "NO (≈Poly YES)" : "NO"}
+              highlight={sidesInverted ? (!polyYesCheaper ? 'low' : null) : (!polyNoCheaper ? 'low' : null)}
             />
           </div>
           <div className="mt-2 text-xs text-gray-500 text-center">
@@ -171,7 +186,7 @@ function PairCard({ pair }: { pair: Pair }) {
               <TrendingDown className="w-4 h-4 text-blue-400" />
             )}
             <span className="text-gray-400">
-              YES price diff: <span className="text-white font-mono">{priceDiffPct.toFixed(1)}¢</span>
+              {sidesInverted ? 'Aligned ' : ''}YES price diff: <span className="text-white font-mono">{priceDiffPct.toFixed(1)}¢</span>
               {priceDiff > 0 ? ' (Poly higher)' : ' (Kalshi higher)'}
             </span>
           </>

@@ -39,6 +39,79 @@ interface PairRow {
   kalshi_snapshot_at: string | null;
 }
 
+// Helper to extract team names from titles for alignment detection
+function extractTeams(title: string): { team1: string | null; team2: string | null } {
+  // Pattern: "Team A vs. Team B" or "Team A vs Team B"
+  const vsMatch = title.match(/^(.+?)\s+(?:vs\.?|versus)\s+(.+?)(?:\s+Winner)?$/i);
+  if (vsMatch) {
+    return { team1: vsMatch[1].trim(), team2: vsMatch[2].trim() };
+  }
+  
+  // Pattern: "Team A at Team B Winner?" (Kalshi style)
+  const atMatch = title.match(/^(.+?)\s+at\s+(.+?)\s+Winner\??$/i);
+  if (atMatch) {
+    return { team1: atMatch[1].trim(), team2: atMatch[2].trim() };
+  }
+  
+  return { team1: null, team2: null };
+}
+
+// Check if team names match (handles city vs mascot differences)
+function teamsMatch(name1: string | null, name2: string | null): boolean {
+  if (!name1 || !name2) return false;
+  
+  const n1 = name1.toLowerCase();
+  const n2 = name2.toLowerCase();
+  
+  // Direct match
+  if (n1.includes(n2) || n2.includes(n1)) return true;
+  
+  // Common NFL city/team mappings
+  const mappings: Record<string, string[]> = {
+    '49ers': ['san francisco', 'sf', 'niners'],
+    'eagles': ['philadelphia', 'philly'],
+    'bills': ['buffalo'],
+    'jaguars': ['jacksonville', 'jags'],
+    'chiefs': ['kansas city', 'kc'],
+    'ravens': ['baltimore'],
+    'cowboys': ['dallas'],
+    'packers': ['green bay', 'gb'],
+    'lions': ['detroit'],
+    'bears': ['chicago'],
+    'vikings': ['minnesota'],
+    'commanders': ['washington'],
+    'giants': ['new york', 'ny giants'],
+    'jets': ['new york', 'ny jets'],
+    'dolphins': ['miami'],
+    'patriots': ['new england'],
+    'steelers': ['pittsburgh'],
+    'bengals': ['cincinnati'],
+    'browns': ['cleveland'],
+    'texans': ['houston'],
+    'colts': ['indianapolis', 'indy'],
+    'titans': ['tennessee'],
+    'broncos': ['denver'],
+    'chargers': ['los angeles', 'la chargers'],
+    'raiders': ['las vegas', 'lv'],
+    'seahawks': ['seattle'],
+    'cardinals': ['arizona'],
+    'rams': ['los angeles', 'la rams'],
+    'saints': ['new orleans'],
+    'buccaneers': ['tampa bay', 'bucs'],
+    'falcons': ['atlanta'],
+    'panthers': ['carolina'],
+  };
+  
+  for (const [mascot, cities] of Object.entries(mappings)) {
+    const allNames = [mascot, ...cities];
+    const n1Match = allNames.some(name => n1.includes(name));
+    const n2Match = allNames.some(name => n2.includes(name));
+    if (n1Match && n2Match) return true;
+  }
+  
+  return false;
+}
+
 export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
@@ -128,11 +201,23 @@ export async function GET(request: NextRequest) {
       const kalshiYes = parseFloat(row.kalshi_yes_price || '0');
       const kalshiNo = parseFloat(row.kalshi_no_price || '0');
 
-      // Calculate cross-platform spread
+      // Detect side alignment
+      const polyTeams = extractTeams(row.poly_title);
+      const kalshiTeams = extractTeams(row.kalshi_title);
+      
+      // Check if team1 (YES side) matches between platforms
+      const team1Aligned = teamsMatch(polyTeams.team1, kalshiTeams.team1);
+      const team1InvertedMatch = teamsMatch(polyTeams.team1, kalshiTeams.team2);
+      const sidesInverted = !team1Aligned && team1InvertedMatch;
+      
+      // If sides are inverted, swap Kalshi prices for comparison
+      const effectiveKalshiYes = sidesInverted ? kalshiNo : kalshiYes;
+      const effectiveKalshiNo = sidesInverted ? kalshiYes : kalshiNo;
+
+      // Calculate cross-platform spread with aligned sides
       // Arb exists if you can buy YES cheap on one and NO cheap on other
-      // Spread = (1 - cheapest_yes - cheapest_no) accounting for both directions
-      const spreadBuyPolyYes = polyYes > 0 && kalshiNo > 0 ? (1 - polyYes - kalshiNo) : null;
-      const spreadBuyKalshiYes = kalshiYes > 0 && polyNo > 0 ? (1 - kalshiYes - polyNo) : null;
+      const spreadBuyPolyYes = polyYes > 0 && effectiveKalshiNo > 0 ? (1 - polyYes - effectiveKalshiNo) : null;
+      const spreadBuyKalshiYes = effectiveKalshiYes > 0 && polyNo > 0 ? (1 - effectiveKalshiYes - polyNo) : null;
       
       const bestSpread = Math.max(spreadBuyPolyYes || -999, spreadBuyKalshiYes || -999);
       const spreadDirection = spreadBuyPolyYes !== null && spreadBuyPolyYes >= (spreadBuyKalshiYes || -999) 
@@ -176,7 +261,12 @@ export async function GET(request: NextRequest) {
         spread: {
           value: bestSpread > -999 ? bestSpread : null,
           direction: bestSpread > -999 ? spreadDirection : null,
-          priceDiff: polyYes > 0 && kalshiYes > 0 ? Math.abs(polyYes - kalshiYes) : null,
+          priceDiff: polyYes > 0 && effectiveKalshiYes > 0 ? Math.abs(polyYes - effectiveKalshiYes) : null,
+        },
+        alignment: {
+          sidesInverted,
+          polyTeam1: polyTeams.team1,
+          kalshiTeam1: kalshiTeams.team1,
         },
       };
     });
