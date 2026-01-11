@@ -273,8 +273,9 @@ async function insertKalshiSnapshot(
     noAskSize?: number | null;
   }
 ): Promise<void> {
-  const yesPrice = lastPrice;
-  const noPrice = 1 - lastPrice;
+  // Safety: ensure price is normalized to 0-1 range
+  const yesPrice = lastPrice > 1 ? lastPrice / 100 : lastPrice;
+  const noPrice = 1 - yesPrice;
 
   const yesBid = opts?.yesBid ?? yesPrice * 0.99;
   const yesAsk = opts?.yesAsk ?? yesPrice * 1.01;
