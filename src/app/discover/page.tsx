@@ -2,7 +2,7 @@
 
 import { useEffect, useState, useMemo } from 'react';
 import { Navbar } from '@/components/Navbar';
-import { RefreshCcw, Check, X, Link2, Unlink, Search, ExternalLink, ArrowDownWideNarrow } from 'lucide-react';
+import { RefreshCcw, Check, X, Link2, Unlink, Search, ExternalLink, ArrowDownWideNarrow, Zap } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 
 interface KalshiCandidate {
@@ -259,6 +259,8 @@ export default function DiscoverPage() {
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
   const [sortBy, setSortBy] = useState<SortOption>('priceDiff');
+  const [fetchingLive, setFetchingLive] = useState(false);
+  const [lastLiveFetch, setLastLiveFetch] = useState<Date | null>(null);
 
   // Sort confirmed links based on selected option
   const sortedConfirmed = useMemo(() => {
@@ -307,6 +309,43 @@ export default function DiscoverPage() {
   useEffect(() => {
     fetchData();
   }, []);
+
+  // Fetch live prices from Dome API for confirmed links
+  const fetchLivePrices = async () => {
+    if (confirmed.length === 0) return;
+    
+    setFetchingLive(true);
+    try {
+      // Get all market IDs from confirmed links
+      const marketIds = confirmed.flatMap(link => [link.polyMarketId, link.kalshiMarketId]);
+      
+      const response = await fetch('/api/live-prices', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ marketIds }),
+      });
+      
+      const data = await response.json();
+      
+      if (data.prices) {
+        // Update confirmed links with live prices
+        setConfirmed(prev => prev.map(link => {
+          const polyPrice = data.prices[link.polyMarketId];
+          const kalshiPrice = data.prices[link.kalshiMarketId];
+          return {
+            ...link,
+            polyYesPrice: polyPrice?.yesPrice ?? link.polyYesPrice,
+            kalshiYesPrice: kalshiPrice?.yesPrice ?? link.kalshiYesPrice,
+          };
+        }));
+        setLastLiveFetch(new Date());
+      }
+    } catch (err) {
+      console.error('Failed to fetch live prices:', err);
+    } finally {
+      setFetchingLive(false);
+    }
+  };
 
   const handleConfirm = async (poly: Suggestion['polyMarket'], kalshi: KalshiCandidate) => {
     setActionLoading(true);
@@ -521,22 +560,43 @@ export default function DiscoverPage() {
             </div>
           ) : (
             <div>
-              {/* Sort dropdown */}
+              {/* Controls: Live fetch + Sort */}
               <div className="flex items-center justify-between mb-4">
-                <span className="text-sm text-gray-400">
-                  {confirmed.length} linked market{confirmed.length !== 1 ? 's' : ''}
-                </span>
-                <div className="flex items-center gap-2">
-                  <ArrowDownWideNarrow className="w-4 h-4 text-gray-500" />
-                  <select
-                    value={sortBy}
-                    onChange={(e) => setSortBy(e.target.value as SortOption)}
-                    className="bg-terminal-card border border-terminal-border rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-accent-cyan"
+                <div className="flex items-center gap-3">
+                  <span className="text-sm text-gray-400">
+                    {confirmed.length} linked market{confirmed.length !== 1 ? 's' : ''}
+                  </span>
+                  {lastLiveFetch && (
+                    <span className="text-xs text-gray-500">
+                      Live: {lastLiveFetch.toLocaleTimeString()}
+                    </span>
+                  )}
+                </div>
+                <div className="flex items-center gap-3">
+                  {/* Fetch Live Prices button */}
+                  <button
+                    onClick={fetchLivePrices}
+                    disabled={fetchingLive || confirmed.length === 0}
+                    className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-yellow-500/20 text-yellow-400 hover:bg-yellow-500/30 disabled:opacity-50 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+                    title="Fetch real-time prices from Dome API"
                   >
-                    <option value="priceDiff">Price Difference</option>
-                    <option value="volume">Volume</option>
-                    <option value="recent">Recently Added</option>
-                  </select>
+                    <Zap className={`w-4 h-4 ${fetchingLive ? 'animate-pulse' : ''}`} />
+                    {fetchingLive ? 'Fetching...' : 'Live Prices'}
+                  </button>
+                  
+                  {/* Sort dropdown */}
+                  <div className="flex items-center gap-2">
+                    <ArrowDownWideNarrow className="w-4 h-4 text-gray-500" />
+                    <select
+                      value={sortBy}
+                      onChange={(e) => setSortBy(e.target.value as SortOption)}
+                      className="bg-terminal-card border border-terminal-border rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-accent-cyan"
+                    >
+                      <option value="priceDiff">Price Difference</option>
+                      <option value="volume">Volume</option>
+                      <option value="recent">Recently Added</option>
+                    </select>
+                  </div>
                 </div>
               </div>
               
