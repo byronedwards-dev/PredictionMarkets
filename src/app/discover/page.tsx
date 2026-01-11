@@ -1,8 +1,8 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, useMemo } from 'react';
 import { Navbar } from '@/components/Navbar';
-import { RefreshCcw, Check, X, Link2, Unlink, Search, ExternalLink } from 'lucide-react';
+import { RefreshCcw, Check, X, Link2, Unlink, Search, ExternalLink, ArrowDownWideNarrow } from 'lucide-react';
 import { formatCurrency } from '@/lib/utils';
 
 interface KalshiCandidate {
@@ -249,6 +249,8 @@ function ConfirmedCard({
   );
 }
 
+type SortOption = 'recent' | 'priceDiff' | 'volume';
+
 export default function DiscoverPage() {
   const [view, setView] = useState<'suggestions' | 'confirmed'>('suggestions');
   const [suggestions, setSuggestions] = useState<Suggestion[]>([]);
@@ -256,6 +258,29 @@ export default function DiscoverPage() {
   const [stats, setStats] = useState<Stats | null>(null);
   const [loading, setLoading] = useState(true);
   const [actionLoading, setActionLoading] = useState(false);
+  const [sortBy, setSortBy] = useState<SortOption>('priceDiff');
+
+  // Sort confirmed links based on selected option
+  const sortedConfirmed = useMemo(() => {
+    const list = [...confirmed];
+    switch (sortBy) {
+      case 'priceDiff':
+        return list.sort((a, b) => {
+          const diffA = Math.abs(a.polyYesPrice - a.kalshiYesPrice);
+          const diffB = Math.abs(b.polyYesPrice - b.kalshiYesPrice);
+          return diffB - diffA; // High to low
+        });
+      case 'volume':
+        return list.sort((a, b) => {
+          const volA = Math.max(a.polyVolume, a.kalshiVolume);
+          const volB = Math.max(b.polyVolume, b.kalshiVolume);
+          return volB - volA; // High to low
+        });
+      case 'recent':
+      default:
+        return list; // Already sorted by confirmed_at DESC from API
+    }
+  }, [confirmed, sortBy]);
 
   const fetchData = async () => {
     setLoading(true);
@@ -495,15 +520,36 @@ export default function DiscoverPage() {
               </p>
             </div>
           ) : (
-            <div className="space-y-3">
-              {confirmed.map((link) => (
-                <ConfirmedCard
-                  key={link.id}
-                  link={link}
-                  onUnlink={() => handleUnlink(link)}
-                  loading={actionLoading}
-                />
-              ))}
+            <div>
+              {/* Sort dropdown */}
+              <div className="flex items-center justify-between mb-4">
+                <span className="text-sm text-gray-400">
+                  {confirmed.length} linked market{confirmed.length !== 1 ? 's' : ''}
+                </span>
+                <div className="flex items-center gap-2">
+                  <ArrowDownWideNarrow className="w-4 h-4 text-gray-500" />
+                  <select
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as SortOption)}
+                    className="bg-terminal-card border border-terminal-border rounded px-2 py-1 text-sm text-white focus:outline-none focus:border-accent-cyan"
+                  >
+                    <option value="priceDiff">Price Difference</option>
+                    <option value="volume">Volume</option>
+                    <option value="recent">Recently Added</option>
+                  </select>
+                </div>
+              </div>
+              
+              <div className="space-y-3">
+                {sortedConfirmed.map((link) => (
+                  <ConfirmedCard
+                    key={link.id}
+                    link={link}
+                    onUnlink={() => handleUnlink(link)}
+                    loading={actionLoading}
+                  />
+                ))}
+              </div>
             </div>
           )
         )}
