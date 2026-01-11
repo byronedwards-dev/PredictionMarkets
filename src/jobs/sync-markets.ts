@@ -9,6 +9,7 @@ import { query } from '../lib/db';
 import dome, { PolymarketMarket, KalshiMarket, MatchingMarketPlatform, OrderbookOrder, PolymarketOrderbookSnapshot, KalshiOrderbookSnapshot } from '../lib/dome-api';
 import { detectSingleMarketArb, detectCrossPlatformArb, trackArbPersistence, closeStaleArbs, PriceSnapshot } from '../lib/arb-detection';
 import { loadFees } from '../lib/fees';
+import { checkVolumeSpikes, VolumeAlert } from '../lib/volume-alerts';
 
 const SYNC_INTERVAL_MS = (parseInt(process.env.SYNC_INTERVAL_MINUTES || '5') * 60 * 1000);
 const BATCH_SIZE = 10; // Smaller batches to avoid rate limits
@@ -16,6 +17,11 @@ const API_PAGE_SIZE = 100; // Dome API max limit per request
 const MAX_PAGES = 2; // 200 markets per platform (most active by volume)
 const MIN_VOLUME_FOR_PRICE_FETCH = 5000; // Only fetch prices for markets with $5k+ volume
 const ORDERBOOK_LOOKBACK_MS = 5 * 60 * 1000; // 5 minutes
+
+function isValidPrice(p: number | null | undefined): p is number {
+  return typeof p === 'number' && p > 0 && p < 1 && Number.isFinite(p);
+}
+
 function normalizePrice(value: number): number {
   return value > 1 ? value / 100 : value;
 }
@@ -85,6 +91,7 @@ interface SyncStats {
   snapshotsTaken: number;
   arbsDetected: number;
   arbsClosed: number;
+  volumeAlerts: number;
   errors: string[];
 }
 
@@ -401,6 +408,7 @@ async function syncMarkets(): Promise<SyncStats> {
     snapshotsTaken: 0,
     arbsDetected: 0,
     arbsClosed: 0,
+    volumeAlerts: 0,
     errors: [],
   };
   
@@ -783,7 +791,36 @@ async function syncMarkets(): Promise<SyncStats> {
     
     console.log(`   Created ${pairsCreated} market pairs`);
     
-    // 5. Close stale arbs
+    // 5. Check for volume spikes (Polymarket only - uses candlestick API)
+    console.log('📊 Checking for volume spikes...');
+    try {
+      // Only check high-volume markets with token IDs
+      const marketsToCheck = highVolumeMarkets
+        .filter(({ market }) => market.side_a?.id)
+        .slice(0, 50) // Limit to top 50 to respect rate limits
+        .map(({ market, id }) => ({
+          id,
+          tokenId: market.side_a.id,
+          title: market.title,
+        }));
+      
+      const volumeAlerts = await checkVolumeSpikes(marketsToCheck);
+      stats.volumeAlerts = volumeAlerts.length;
+      
+      if (volumeAlerts.length > 0) {
+        console.log(`   🔔 ${volumeAlerts.length} volume spike(s) detected:`);
+        volumeAlerts.slice(0, 5).forEach(alert => {
+          console.log(`      ${alert.title.substring(0, 40)}... (${alert.multiplier.toFixed(1)}x avg)`);
+        });
+      } else {
+        console.log('   No significant volume spikes detected');
+      }
+    } catch (err) {
+      stats.errors.push(`Volume spike check failed: ${err}`);
+      console.warn('   ⚠️ Volume spike check failed:', err);
+    }
+    
+    // 6. Close stale arbs
     stats.arbsClosed = await closeStaleArbs(10);
     if (stats.arbsClosed > 0) {
       console.log(`   Closed ${stats.arbsClosed} stale arbs`);
@@ -800,7 +837,7 @@ async function syncMarkets(): Promise<SyncStats> {
       [stats.marketsUpserted, stats.arbsDetected, syncId]
     );
     
-    console.log(`\n✅ Sync completed: ${stats.marketsUpserted} markets, ${stats.snapshotsTaken} snapshots, ${stats.arbsDetected} arbs`);
+    console.log(`\n✅ Sync completed: ${stats.marketsUpserted} markets, ${stats.snapshotsTaken} snapshots, ${stats.arbsDetected} arbs, ${stats.volumeAlerts} volume alerts`);
     if (stats.errors.length > 0) {
       console.log(`⚠️  ${stats.errors.length} errors occurred`);
       stats.errors.slice(0, 3).forEach(e => console.log(`   - ${e}`));

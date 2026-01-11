@@ -194,7 +194,7 @@ export async function GET(request: NextRequest) {
     return NextResponse.json({
       pairs: filteredPairs,
       total: filteredPairs.length,
-      sports: [...new Set(pairs.map(p => p.sport).filter(Boolean))],
+      sports: Array.from(new Set(pairs.map(p => p.sport).filter(Boolean))),
     });
   } catch (error) {
     console.error('Pairs API error:', error);

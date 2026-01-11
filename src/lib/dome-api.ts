@@ -70,6 +70,21 @@ export interface MarketPriceResponse {
   at_time: number;
 }
 
+export interface CandlestickData {
+  timestamp: number;
+  open: number;
+  high: number;
+  low: number;
+  close: number;
+  volume: number;
+}
+
+export interface CandlesticksResponse {
+  candles: CandlestickData[];
+  interval: string;
+  token_id: string;
+}
+
 export interface OrderbookOrder {
   size: string;
   price: string;
@@ -255,6 +270,27 @@ export const polymarket = {
     if (params.limit) searchParams.set('limit', params.limit.toString());
     
     const url = `${DOME_BASE_URL}/polymarket/orderbooks?${searchParams}`;
+    const response = await rateLimitedFetch(url);
+    return response.json();
+  },
+
+  /**
+   * Get candlestick data for a token
+   * Provides OHLCV data aggregated by time interval
+   */
+  async getCandlesticks(params: {
+    token_id: string;
+    interval: '1m' | '5m' | '15m' | '1h' | '4h' | '1d';
+    start_time: number; // milliseconds
+    end_time: number;   // milliseconds
+  }): Promise<CandlesticksResponse> {
+    const searchParams = new URLSearchParams();
+    searchParams.set('token_id', params.token_id);
+    searchParams.set('interval', params.interval);
+    searchParams.set('start_time', params.start_time.toString());
+    searchParams.set('end_time', params.end_time.toString());
+    
+    const url = `${DOME_BASE_URL}/polymarket/candlesticks?${searchParams}`;
     const response = await rateLimitedFetch(url);
     return response.json();
   },
