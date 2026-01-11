@@ -184,8 +184,14 @@ export default function Dashboard() {
           />
           <StatCard
             title="Last Sync"
-            value={stats?.lastSync ? formatRelativeTime(new Date(stats.lastSync.completedAt)) : 'Never'}
-            subtitle={stats?.lastSync ? `${stats.lastSync.marketsSynced} markets synced` : 'Run sync job to start'}
+            value={stats?.lastSync?.completedAt 
+              ? formatRelativeTime(new Date(stats.lastSync.completedAt)) 
+              : stats?.lastSync?.startedAt 
+                ? 'Running...'
+                : 'Never'}
+            subtitle={stats?.lastSync 
+              ? `${stats.lastSync.marketsSynced} markets synced` 
+              : 'Run sync job to start'}
             icon={Activity}
             variant={stats?.lastSync?.status === 'completed' ? 'default' : 'warning'}
           />

@@ -108,8 +108,8 @@ export async function GET() {
         totalDeployable: parseFloat(arbs.total_deployable) || 0,
       },
       lastSync: sync ? {
-        startedAt: sync.started_at,
-        completedAt: sync.completed_at,
+        startedAt: sync.started_at ? new Date(sync.started_at).toISOString() : null,
+        completedAt: sync.completed_at ? new Date(sync.completed_at).toISOString() : null,
         status: sync.status,
         marketsSynced: sync.markets_synced,
         arbsDetected: sync.arbs_detected,
