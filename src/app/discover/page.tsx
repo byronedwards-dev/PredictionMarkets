@@ -47,8 +47,14 @@ interface Stats {
   minScoreThreshold: number;
 }
 
+// Normalize price to 0-1 range (Kalshi sometimes stored as 0-100)
+function normalizePrice(price: number): number {
+  return price > 1 ? price / 100 : price;
+}
+
 function formatPrice(price: number): string {
-  return `${(price * 100).toFixed(0)}¢`;
+  const normalized = normalizePrice(price);
+  return `${(normalized * 100).toFixed(0)}¢`;
 }
 
 function SuggestionCard({ 
@@ -241,16 +247,18 @@ export default function DiscoverPage() {
   const fetchData = async () => {
     setLoading(true);
     try {
-      if (view === 'suggestions') {
-        const res = await fetch('/api/discover?view=suggestions&minScore=80');
-        const data = await res.json();
-        setSuggestions(data.suggestions || []);
-        setStats(data.stats || null);
-      } else {
-        const res = await fetch('/api/discover?view=confirmed');
-        const data = await res.json();
-        setConfirmed(data.links || []);
-      }
+      // Always fetch both to keep counts accurate
+      const [suggestionsRes, confirmedRes] = await Promise.all([
+        fetch('/api/discover?view=suggestions&minScore=80'),
+        fetch('/api/discover?view=confirmed'),
+      ]);
+      
+      const suggestionsData = await suggestionsRes.json();
+      const confirmedData = await confirmedRes.json();
+      
+      setSuggestions(suggestionsData.suggestions || []);
+      setStats(suggestionsData.stats || null);
+      setConfirmed(confirmedData.links || []);
     } catch (err) {
       console.error('Failed to fetch:', err);
     } finally {
@@ -260,7 +268,7 @@ export default function DiscoverPage() {
 
   useEffect(() => {
     fetchData();
-  }, [view]);
+  }, []);
 
   const handleConfirm = async (poly: Suggestion['polyMarket'], kalshi: KalshiCandidate) => {
     setActionLoading(true);
@@ -388,7 +396,7 @@ export default function DiscoverPage() {
             }`}
           >
             <Link2 className="w-4 h-4 inline mr-2" />
-            Confirmed Links ({confirmed.length || stats?.alreadyConfirmed || 0})
+            Confirmed Links ({confirmed.length})
           </button>
         </div>
 
