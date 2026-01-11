@@ -287,6 +287,20 @@ export default function DiscoverPage() {
       });
       // Remove from suggestions
       setSuggestions(prev => prev.filter(s => s.polyMarket.id !== poly.id));
+      // Add to confirmed list immediately (optimistic update)
+      setConfirmed(prev => [{
+        id: Date.now(), // Temporary ID until refresh
+        polyMarketId: poly.id,
+        kalshiMarketId: kalshi.id,
+        polyTitle: poly.title,
+        kalshiTitle: kalshi.title,
+        matchScore: kalshi.score,
+        polyYesPrice: poly.yesPrice,
+        kalshiYesPrice: kalshi.yesPrice,
+        polyVolume: poly.volume,
+        kalshiVolume: kalshi.volume,
+        confirmedAt: new Date().toISOString(),
+      }, ...prev]);
     } catch (err) {
       console.error('Failed to confirm:', err);
     } finally {
