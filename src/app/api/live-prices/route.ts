@@ -64,9 +64,9 @@ export async function POST(request: NextRequest) {
           const response = await dome.kalshi.getMarkets({ market_ticker: [market.platformId], limit: 1 });
           const kalshiMarket = response.markets?.[0];
           if (kalshiMarket) {
-            // Normalize Kalshi price (comes as 0-100 cents)
+            // Normalize Kalshi price (comes as cents: 1=1¢, 50=50¢, 100=100¢)
             const rawPrice = kalshiMarket.last_price || 0;
-            const yesPrice = rawPrice > 1 ? rawPrice / 100 : rawPrice;
+            const yesPrice = rawPrice >= 1 ? rawPrice / 100 : rawPrice;
             prices[market.id] = {
               yesPrice,
               noPrice: 1 - yesPrice,

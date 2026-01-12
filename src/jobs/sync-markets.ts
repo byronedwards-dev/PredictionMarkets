@@ -273,10 +273,12 @@ async function insertKalshiSnapshot(
     noAskSize?: number | null;
   }
 ): Promise<void> {
-  // Safety: ensure ALL prices are normalized to 0-1 range (Kalshi comes as 0-100)
+  // Safety: ensure ALL prices are normalized to 0-1 range
+  // Kalshi sends prices as cents (1 = 1¢, 50 = 50¢, 100 = 100¢)
+  // So ANY value >= 1 needs to be divided by 100
   const normalizeVal = (v: number | null | undefined): number | null => {
     if (v === null || v === undefined) return null;
-    return v > 1 ? v / 100 : v;
+    return v >= 1 ? v / 100 : v;
   };
   
   const yesPrice = normalizeVal(lastPrice) ?? 0;
