@@ -7,6 +7,10 @@ export const dynamic = 'force-dynamic';
 // Minimum volume for a market to be considered as a match candidate
 const MIN_VOLUME_FOR_MATCHING = 1000; // $1,000 minimum
 
+// Price range filter - exclude extreme prices (essentially resolved markets)
+const MIN_INTERESTING_PRICE = 0.10; // 10¢ - below this is "obvious no"
+const MAX_INTERESTING_PRICE = 0.90; // 90¢ - above this is "obvious yes"
+
 interface MarketRow {
   id: number;
   platform: string;
@@ -137,12 +141,22 @@ export async function GET(request: NextRequest) {
       LIMIT 500
     `);
 
-    // Filter to election-related markets with minimum volume for Kalshi
-    const polyElection = polyMarkets.rows.filter(m => isElectionRelated(m.title));
-    const kalshiElection = kalshiMarkets.rows.filter(m => 
-      isElectionRelated(m.title) && 
-      parseFloat(m.volume_all_time || '0') >= MIN_VOLUME_FOR_MATCHING
-    );
+    // Helper to check if price is in "interesting" range (not essentially resolved)
+    const isInterestingPrice = (price: number) => 
+      price >= MIN_INTERESTING_PRICE && price <= MAX_INTERESTING_PRICE;
+
+    // Filter to election-related markets with minimum volume and interesting prices
+    const polyElection = polyMarkets.rows.filter(m => {
+      const price = parseFloat(m.yes_price || '0');
+      return isElectionRelated(m.title) && isInterestingPrice(price);
+    });
+    
+    const kalshiElection = kalshiMarkets.rows.filter(m => {
+      const price = parseFloat(m.yes_price || '0');
+      return isElectionRelated(m.title) && 
+        parseFloat(m.volume_all_time || '0') >= MIN_VOLUME_FOR_MATCHING &&
+        isInterestingPrice(price);
+    });
 
     // Build suggestions for unmatched Polymarket markets
     const suggestions: Array<{
