@@ -177,9 +177,10 @@ export async function GET(request: NextRequest) {
     // Filter to active markets (both sides open and not resolved)
     if (activeOnly) {
       sql += ` AND pm.status = 'open' AND km.status = 'open'`;
-      // Also filter out effectively resolved markets (price at 0 or 1)
-      sql += ` AND (pps.yes_price IS NULL OR (pps.yes_price > 0.02 AND pps.yes_price < 0.98))`;
-      sql += ` AND (kps.yes_price IS NULL OR (kps.yes_price > 0.02 AND kps.yes_price < 0.98))`;
+      // Filter out effectively resolved markets (price very close to 0 or 1)
+      // Allow NULL, 0, or prices in valid range - only exclude extremes (>98% or <2% but not 0)
+      sql += ` AND (pps.yes_price IS NULL OR pps.yes_price = 0 OR (pps.yes_price > 0.02 AND pps.yes_price < 0.98))`;
+      sql += ` AND (kps.yes_price IS NULL OR kps.yes_price = 0 OR (kps.yes_price > 0.02 AND kps.yes_price < 0.98))`;
     }
 
     if (sport) {
