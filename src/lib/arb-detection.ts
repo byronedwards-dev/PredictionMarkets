@@ -71,6 +71,34 @@ export interface CrossPlatformArb {
   strategy: string;
 }
 
+export interface MultiOutcomeArb {
+  eventName: string;
+  platform: string;
+  type: 'multi_outcome';
+  quality: ArbQuality;
+  
+  // Outcomes
+  outcomeCount: number;
+  outcomes: Array<{
+    marketId: number;
+    title: string;
+    yesAsk: number;  // Price to buy YES
+    askSize: number;
+  }>;
+  
+  // Spread calculations (cost to buy all outcomes)
+  totalCost: number;       // Sum of all YES asks
+  grossSpreadPct: number;  // (1 - totalCost) as percentage
+  totalFeesPct: number;    // Fee on total investment
+  netSpreadPct: number;    // Gross - fees
+  
+  // Liquidity (min across all outcomes)
+  maxDeployableUsd: number;
+  capitalWeightedProfit: number;
+  
+  strategy: string;
+}
+
 // Quality classification thresholds (configurable)
 const THRESHOLDS = {
   MIN_GROSS_SPREAD: 0.005, // 0.5% minimum gross
@@ -243,22 +271,144 @@ export function detectCrossPlatformArb(
 }
 
 /**
+ * Detect multi-outcome arbitrage opportunities
+ * 
+ * An arb exists when the sum of YES asks for all outcomes < 1.00
+ * This means you can buy all outcomes for less than the guaranteed $1 payout
+ */
+export async function detectMultiOutcomeArbs(
+  platform: 'polymarket' | 'kalshi'
+): Promise<MultiOutcomeArb[]> {
+  const arbs: MultiOutcomeArb[] = [];
+  const fee = getTotalFee(platform);
+  
+  // Get all open markets grouped by event patterns
+  // We identify events by common title patterns
+  const eventPatterns = [
+    { pattern: '%Super Bowl%', name: 'Super Bowl Winner' },
+    { pattern: '%NBA Finals%', name: 'NBA Finals Winner' },
+    { pattern: '%Champions League%winner%', name: 'Champions League Winner' },
+    { pattern: '%Premier League%winner%', name: 'Premier League Winner' },
+    { pattern: '%Democratic presidential nomination%', name: 'Dem 2028 Nominee' },
+    { pattern: '%Republican presidential nomination%', name: 'GOP 2028 Nominee' },
+    { pattern: '%Fed Chair%', name: 'Fed Chair Nominee' },
+    { pattern: '%Treasury Secretary%', name: 'Treasury Secretary' },
+    { pattern: '%World Series%', name: 'World Series Winner' },
+    { pattern: '%Stanley Cup%', name: 'Stanley Cup Winner' },
+  ];
+  
+  for (const { pattern, name } of eventPatterns) {
+    const result = await query<{
+      market_id: number;
+      title: string;
+      yes_ask: string;
+      yes_ask_size: string;
+    }>(`
+      SELECT m.id as market_id, m.title, ps.yes_ask, ps.yes_ask_size
+      FROM markets m
+      JOIN LATERAL (
+        SELECT yes_ask, yes_ask_size 
+        FROM price_snapshots 
+        WHERE market_id = m.id 
+        ORDER BY snapshot_at DESC 
+        LIMIT 1
+      ) ps ON true
+      WHERE m.platform = $1 
+        AND m.status = 'open'
+        AND m.title ILIKE $2
+        AND ps.yes_ask > 0
+        AND ps.yes_ask < 1
+      ORDER BY ps.yes_ask DESC
+    `, [platform, pattern]);
+    
+    if (result.rows.length < 3) continue; // Need at least 3 outcomes
+    
+    const outcomes = result.rows.map(r => ({
+      marketId: r.market_id,
+      title: r.title,
+      yesAsk: parseFloat(r.yes_ask),
+      askSize: parseFloat(r.yes_ask_size),
+    }));
+    
+    // Calculate totals
+    const totalCost = outcomes.reduce((sum, o) => sum + o.yesAsk, 0);
+    const grossSpread = 1 - totalCost;
+    
+    // Fee is percentage of total investment
+    const totalFees = fee * totalCost;
+    const netSpread = grossSpread - totalFees;
+    
+    // Skip if not profitable
+    if (netSpread < THRESHOLDS.MIN_NET_SPREAD) continue;
+    
+    // Liquidity is the minimum across all outcomes
+    const maxDeployable = Math.min(...outcomes.map(o => o.askSize));
+    
+    const quality = classifyQuality(netSpread, maxDeployable);
+    if (!quality) continue;
+    
+    const strategy = `Buy all ${outcomes.length} outcomes for ${(totalCost * 100).toFixed(1)}¢, collect $1. Net: ${(netSpread * 100).toFixed(1)}¢`;
+    
+    arbs.push({
+      eventName: name,
+      platform,
+      type: 'multi_outcome',
+      quality,
+      outcomeCount: outcomes.length,
+      outcomes,
+      totalCost,
+      grossSpreadPct: grossSpread * 100,
+      totalFeesPct: totalFees * 100,
+      netSpreadPct: netSpread * 100,
+      maxDeployableUsd: maxDeployable,
+      capitalWeightedProfit: netSpread * maxDeployable,
+      strategy,
+    });
+  }
+  
+  return arbs;
+}
+
+/**
  * Track arb persistence - update or create arb opportunity record
  */
 export async function trackArbPersistence(
-  arb: SingleMarketArb | CrossPlatformArb
+  arb: SingleMarketArb | CrossPlatformArb | MultiOutcomeArb
 ): Promise<number> {
   const isSingleMarket = 'type' in arb && arb.type === 'underround';
-  const type = isSingleMarket ? 'underround' : 'cross_platform';
+  const isMultiOutcome = 'type' in arb && arb.type === 'multi_outcome';
+  const type = isSingleMarket ? 'underround' : isMultiOutcome ? 'multi_outcome' : 'cross_platform';
+  
+  // For multi-outcome, use event name as identifier (stored in details)
+  // For single market, use market_id
+  // For cross-platform, use market_pair_id
+  let identifier: string | number;
+  let identifierColumn: string;
+  
+  if (isMultiOutcome) {
+    identifier = (arb as MultiOutcomeArb).eventName;
+    identifierColumn = 'event_name';
+  } else if (isSingleMarket) {
+    identifier = (arb as SingleMarketArb).marketId;
+    identifierColumn = 'market_id';
+  } else {
+    identifier = (arb as CrossPlatformArb).pairId;
+    identifierColumn = 'market_pair_id';
+  }
   
   // Check if this arb already exists
-  const existing = await query<{ id: number; snapshot_count: number }>(
-    `SELECT id, snapshot_count FROM arb_opportunities 
-     WHERE ${isSingleMarket ? 'market_id' : 'market_pair_id'} = $1 
-       AND type = $2 
-       AND resolved_at IS NULL`,
-    [isSingleMarket ? (arb as SingleMarketArb).marketId : (arb as CrossPlatformArb).pairId, type]
-  );
+  // For multi-outcome, we check by type and event name in details
+  const existingQuery = isMultiOutcome
+    ? `SELECT id, snapshot_count FROM arb_opportunities 
+       WHERE type = $1 AND details->>'eventName' = $2 AND resolved_at IS NULL`
+    : `SELECT id, snapshot_count FROM arb_opportunities 
+       WHERE ${identifierColumn} = $1 AND type = $2 AND resolved_at IS NULL`;
+  
+  const existingParams = isMultiOutcome 
+    ? [type, identifier]
+    : [identifier, type];
+  
+  const existing = await query<{ id: number; snapshot_count: number }>(existingQuery, existingParams);
   
   const details = JSON.stringify(arb);
   
@@ -290,28 +440,50 @@ export async function trackArbPersistence(
     );
     return existing.rows[0].id;
   } else {
-    // Insert new
-    const result = await query<{ id: number }>(
-      `INSERT INTO arb_opportunities (
-        type, quality, 
-        ${isSingleMarket ? 'market_id' : 'market_pair_id'},
-        gross_spread_pct, total_fees_pct, net_spread_pct,
-        max_deployable_usd, capital_weighted_spread, details
-      ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-      RETURNING id`,
-      [
-        type,
-        arb.quality,
-        isSingleMarket ? (arb as SingleMarketArb).marketId : (arb as CrossPlatformArb).pairId,
-        arb.grossSpreadPct,
-        arb.totalFeesPct,
-        arb.netSpreadPct,
-        arb.maxDeployableUsd,
-        arb.capitalWeightedProfit,
-        details,
-      ]
-    );
-    return result.rows[0].id;
+    // Insert new - for multi-outcome, we don't have a market_id or pair_id
+    if (isMultiOutcome) {
+      const result = await query<{ id: number }>(
+        `INSERT INTO arb_opportunities (
+          type, quality,
+          gross_spread_pct, total_fees_pct, net_spread_pct,
+          max_deployable_usd, capital_weighted_spread, details
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+        RETURNING id`,
+        [
+          type,
+          arb.quality,
+          arb.grossSpreadPct,
+          arb.totalFeesPct,
+          arb.netSpreadPct,
+          arb.maxDeployableUsd,
+          arb.capitalWeightedProfit,
+          details,
+        ]
+      );
+      return result.rows[0].id;
+    } else {
+      const result = await query<{ id: number }>(
+        `INSERT INTO arb_opportunities (
+          type, quality, 
+          ${isSingleMarket ? 'market_id' : 'market_pair_id'},
+          gross_spread_pct, total_fees_pct, net_spread_pct,
+          max_deployable_usd, capital_weighted_spread, details
+        ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
+        RETURNING id`,
+        [
+          type,
+          arb.quality,
+          identifier,
+          arb.grossSpreadPct,
+          arb.totalFeesPct,
+          arb.netSpreadPct,
+          arb.maxDeployableUsd,
+          arb.capitalWeightedProfit,
+          details,
+        ]
+      );
+      return result.rows[0].id;
+    }
   }
 }
 
@@ -334,7 +506,7 @@ export async function closeStaleArbs(staleMinutes: number = 10): Promise<number>
  * Get active arbitrage opportunities
  */
 export async function getActiveArbs(filters?: {
-  type?: 'underround' | 'cross_platform';
+  type?: 'underround' | 'cross_platform' | 'multi_outcome';
   quality?: ArbQuality[];
   minNetSpread?: number;
   minDeployable?: number;

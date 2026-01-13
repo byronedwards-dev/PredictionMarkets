@@ -40,6 +40,7 @@ interface EventGroup {
 
 interface Filters {
   platform: string;
+  category: string;
   sport: string;
   status: string;
   hasArb: boolean;
@@ -246,6 +247,7 @@ export default function MarketsPage() {
   const [expandedEvents, setExpandedEvents] = useState<Set<string>>(new Set());
   const [filters, setFilters] = useState<Filters>({
     platform: '',
+    category: '',
     sport: '',
     status: 'open',
     hasArb: false,
@@ -260,6 +262,7 @@ export default function MarketsPage() {
         
         const params = new URLSearchParams();
         if (filters.platform) params.set('platform', filters.platform);
+        if (filters.category) params.set('category', filters.category);
         if (filters.sport) params.set('sport', filters.sport);
         if (filters.status) params.set('status', filters.status);
         if (filters.hasArb) params.set('hasArb', 'true');
@@ -312,6 +315,7 @@ export default function MarketsPage() {
   const clearFilters = () => {
     setFilters({
       platform: '',
+      category: '',
       sport: '',
       status: 'open',
       hasArb: false,
@@ -319,7 +323,7 @@ export default function MarketsPage() {
     });
   };
 
-  const hasActiveFilters = filters.platform || filters.sport || filters.status !== 'open' || filters.hasArb || filters.minVolume;
+  const hasActiveFilters = filters.platform || filters.category || filters.sport || filters.status !== 'open' || filters.hasArb || filters.minVolume;
 
   return (
     <div className="min-h-screen">
@@ -375,7 +379,7 @@ export default function MarketsPage() {
                 </button>
               )}
             </div>
-            <div className="grid grid-cols-2 md:grid-cols-5 gap-4">
+            <div className="grid grid-cols-2 md:grid-cols-6 gap-4">
               {/* Platform */}
               <div>
                 <label className="block text-xs text-gray-400 mb-1.5">Platform</label>
@@ -387,6 +391,27 @@ export default function MarketsPage() {
                   <option value="">All Platforms</option>
                   <option value="polymarket">Polymarket</option>
                   <option value="kalshi">Kalshi</option>
+                </select>
+              </div>
+
+              {/* Category */}
+              <div>
+                <label className="block text-xs text-gray-400 mb-1.5">Category</label>
+                <select
+                  value={filters.category}
+                  onChange={(e) => setFilters({ ...filters, category: e.target.value })}
+                  className="w-full px-3 py-2 rounded-lg bg-terminal-bg border border-terminal-border text-white text-sm focus:outline-none focus:border-accent-cyan"
+                >
+                  <option value="">All Categories</option>
+                  <option value="Sports">Sports</option>
+                  <option value="Politics">Politics</option>
+                  <option value="Crypto">Crypto</option>
+                  <option value="Finance">Finance</option>
+                  <option value="Geopolitics">Geopolitics</option>
+                  <option value="Entertainment">Entertainment</option>
+                  <option value="Tech">Tech</option>
+                  <option value="Health">Health</option>
+                  <option value="Other">Other</option>
                 </select>
               </div>
               
@@ -403,6 +428,9 @@ export default function MarketsPage() {
                   <option value="nba">NBA</option>
                   <option value="mlb">MLB</option>
                   <option value="nhl">NHL</option>
+                  <option value="cfb">College FB</option>
+                  <option value="ncaab">College BB</option>
+                  <option value="soccer">Soccer</option>
                 </select>
               </div>
               

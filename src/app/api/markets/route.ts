@@ -49,6 +49,7 @@ export async function GET(request: NextRequest) {
   try {
     const searchParams = request.nextUrl.searchParams;
     const platform = searchParams.get('platform');
+    const category = searchParams.get('category');
     const sport = searchParams.get('sport');
     const status = searchParams.get('status') || 'open';
     const minVolume = searchParams.get('minVolume');
@@ -93,6 +94,29 @@ export async function GET(request: NextRequest) {
     if (platform) {
       sql += ` AND m.platform = $${paramIndex++}`;
       params.push(platform);
+    }
+
+    if (category) {
+      // Map normalized category names to database values
+      const categoryMapping: Record<string, string[]> = {
+        'Sports': ['Sports', 'Soccer', 'NFL Playoffs', 'CFB', 'Formula 1', 'Tennis'],
+        'Politics': ['Politics', 'World Elections', 'Global Elections', 'US Election', 'Elections', 'Brazil'],
+        'Crypto': ['Crypto', 'Bitcoin', 'Ethereum', 'Airdrops', 'Stablecoins'],
+        'Geopolitics': ['Geopolitics', 'Foreign Policy', 'Trade War', 'Iran', 'Israel', 'Gaza', 'putin', 'Denmark', 'World'],
+        'Finance': ['Finance', 'Business', 'Macro Indicators', 'Fed Rates', 'Public Sales', 'Jerome Powell'],
+        'Entertainment': ['Entertainment', 'Culture', 'Movies', 'Awards', 'Celebrities', 'Games', 'Pokemon', 'video games'],
+        'Tech': ['Tech', 'Gemini 3'],
+        'Health': ['Health'],
+      };
+      
+      const categoryValues = categoryMapping[category];
+      if (categoryValues) {
+        sql += ` AND (m.category = ANY($${paramIndex++}) OR (m.category IS NULL AND m.sport IS NOT NULL AND $${paramIndex++} = 'Sports'))`;
+        params.push(categoryValues);
+        params.push(category);
+      } else if (category === 'Other') {
+        sql += ` AND m.category IS NULL AND m.sport IS NULL`;
+      }
     }
 
     if (sport) {
@@ -148,6 +172,27 @@ export async function GET(request: NextRequest) {
     if (platform) {
       countSql += ` AND m.platform = $${countParamIndex++}`;
       countParams.push(platform);
+    }
+    if (category) {
+      const categoryMapping: Record<string, string[]> = {
+        'Sports': ['Sports', 'Soccer', 'NFL Playoffs', 'CFB', 'Formula 1', 'Tennis'],
+        'Politics': ['Politics', 'World Elections', 'Global Elections', 'US Election', 'Elections', 'Brazil'],
+        'Crypto': ['Crypto', 'Bitcoin', 'Ethereum', 'Airdrops', 'Stablecoins'],
+        'Geopolitics': ['Geopolitics', 'Foreign Policy', 'Trade War', 'Iran', 'Israel', 'Gaza', 'putin', 'Denmark', 'World'],
+        'Finance': ['Finance', 'Business', 'Macro Indicators', 'Fed Rates', 'Public Sales', 'Jerome Powell'],
+        'Entertainment': ['Entertainment', 'Culture', 'Movies', 'Awards', 'Celebrities', 'Games', 'Pokemon', 'video games'],
+        'Tech': ['Tech', 'Gemini 3'],
+        'Health': ['Health'],
+      };
+      
+      const categoryValues = categoryMapping[category];
+      if (categoryValues) {
+        countSql += ` AND (m.category = ANY($${countParamIndex++}) OR (m.category IS NULL AND m.sport IS NOT NULL AND $${countParamIndex++} = 'Sports'))`;
+        countParams.push(categoryValues);
+        countParams.push(category);
+      } else if (category === 'Other') {
+        countSql += ` AND m.category IS NULL AND m.sport IS NULL`;
+      }
     }
     if (sport) {
       countSql += ` AND m.sport = $${countParamIndex++}`;

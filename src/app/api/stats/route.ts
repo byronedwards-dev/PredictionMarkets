@@ -20,6 +20,85 @@ export async function GET() {
       WHERE m.status = 'open'
     `);
 
+    // Get platform breakdown with single vs multi-outcome
+    const platformBreakdown = await query<{
+      platform: string;
+      total_markets: string;
+      total_events: string;
+      single_outcome_events: string;
+      multi_outcome_events: string;
+      markets_in_multi: string;
+    }>(`
+      WITH event_counts AS (
+        SELECT 
+          platform,
+          COALESCE(event_id, platform_id) as event_key,
+          COUNT(*) as market_count
+        FROM markets
+        WHERE status = 'open'
+        GROUP BY platform, COALESCE(event_id, platform_id)
+      )
+      SELECT 
+        platform,
+        SUM(market_count)::TEXT as total_markets,
+        COUNT(*)::TEXT as total_events,
+        COUNT(*) FILTER (WHERE market_count = 1)::TEXT as single_outcome_events,
+        COUNT(*) FILTER (WHERE market_count > 1)::TEXT as multi_outcome_events,
+        SUM(market_count) FILTER (WHERE market_count > 1)::TEXT as markets_in_multi
+      FROM event_counts
+      GROUP BY platform
+    `);
+
+    // Get category breakdown - normalize categories across platforms
+    const categoryBreakdown = await query<{
+      category: string;
+      platform: string;
+      count: string;
+    }>(`
+      SELECT 
+        COALESCE(
+          CASE 
+            WHEN category IN ('Sports', 'Soccer', 'NFL Playoffs', 'CFB', 'Formula 1', 'Tennis') THEN 'Sports'
+            WHEN category IN ('Politics', 'World Elections', 'Global Elections', 'US Election', 'Elections') THEN 'Politics'
+            WHEN category IN ('Crypto', 'Bitcoin', 'Ethereum', 'Airdrops', 'Stablecoins') THEN 'Crypto'
+            WHEN category IN ('Geopolitics', 'Foreign Policy', 'Trade War', 'Iran', 'Israel', 'Gaza', 'putin', 'Denmark', 'World') THEN 'Geopolitics'
+            WHEN category IN ('Business', 'Finance', 'Macro Indicators', 'Fed Rates', 'Public Sales') THEN 'Finance'
+            WHEN category IN ('Culture', 'Movies', 'Awards', 'Celebrities', 'Games', 'Pokemon', 'video games', 'Entertainment') THEN 'Entertainment'
+            WHEN category IN ('Tech', 'Gemini 3') THEN 'Tech'
+            WHEN category IN ('Health') THEN 'Health'
+            WHEN category IN ('Jerome Powell', 'Fed Rates') THEN 'Finance'
+            WHEN category IN ('Brazil') THEN 'Politics'
+            WHEN sport IS NOT NULL THEN 'Sports'
+            ELSE 'Other'
+          END,
+          'Other'
+        ) as category,
+        platform,
+        COUNT(*)::TEXT as count
+      FROM markets
+      WHERE status = 'open'
+      GROUP BY 
+        COALESCE(
+          CASE 
+            WHEN category IN ('Sports', 'Soccer', 'NFL Playoffs', 'CFB', 'Formula 1', 'Tennis') THEN 'Sports'
+            WHEN category IN ('Politics', 'World Elections', 'Global Elections', 'US Election', 'Elections') THEN 'Politics'
+            WHEN category IN ('Crypto', 'Bitcoin', 'Ethereum', 'Airdrops', 'Stablecoins') THEN 'Crypto'
+            WHEN category IN ('Geopolitics', 'Foreign Policy', 'Trade War', 'Iran', 'Israel', 'Gaza', 'putin', 'Denmark', 'World') THEN 'Geopolitics'
+            WHEN category IN ('Business', 'Finance', 'Macro Indicators', 'Fed Rates', 'Public Sales') THEN 'Finance'
+            WHEN category IN ('Culture', 'Movies', 'Awards', 'Celebrities', 'Games', 'Pokemon', 'video games', 'Entertainment') THEN 'Entertainment'
+            WHEN category IN ('Tech', 'Gemini 3') THEN 'Tech'
+            WHEN category IN ('Health') THEN 'Health'
+            WHEN category IN ('Jerome Powell', 'Fed Rates') THEN 'Finance'
+            WHEN category IN ('Brazil') THEN 'Politics'
+            WHEN sport IS NOT NULL THEN 'Sports'
+            ELSE 'Other'
+          END,
+          'Other'
+        ),
+        platform
+      ORDER BY count DESC
+    `);
+
     // Get arb stats
     const arbStats = await query<{
       active: string;
@@ -92,6 +171,36 @@ export async function GET() {
     const snapshots = snapshotStats.rows[0];
     const events = eventStats.rows[0];
 
+    // Build platform breakdown
+    const platformData: Record<string, {
+      totalMarkets: number;
+      totalEvents: number;
+      singleOutcome: number;
+      multiOutcome: number;
+      marketsInMulti: number;
+    }> = {};
+    
+    for (const row of platformBreakdown.rows) {
+      platformData[row.platform] = {
+        totalMarkets: parseInt(row.total_markets) || 0,
+        totalEvents: parseInt(row.total_events) || 0,
+        singleOutcome: parseInt(row.single_outcome_events) || 0,
+        multiOutcome: parseInt(row.multi_outcome_events) || 0,
+        marketsInMulti: parseInt(row.markets_in_multi) || 0,
+      };
+    }
+
+    // Build category breakdown
+    const categories: Record<string, { polymarket: number; kalshi: number; total: number }> = {};
+    for (const row of categoryBreakdown.rows) {
+      if (!categories[row.category]) {
+        categories[row.category] = { polymarket: 0, kalshi: 0, total: 0 };
+      }
+      const count = parseInt(row.count) || 0;
+      categories[row.category][row.platform as 'polymarket' | 'kalshi'] = count;
+      categories[row.category].total += count;
+    }
+
     return NextResponse.json({
       markets: {
         total: parseInt(markets.total) || 0,
@@ -129,6 +238,8 @@ export async function GET() {
         active: parseInt(events.active_events) || 0,
         closed: parseInt(events.closed_events) || 0,
       },
+      platformBreakdown: platformData,
+      categories,
     });
   } catch (error) {
     console.error('Stats API error:', error);

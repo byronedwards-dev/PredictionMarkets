@@ -16,6 +16,20 @@ import {
 } from 'lucide-react';
 import { formatCurrency, formatPercent, formatRelativeTime } from '@/lib/utils';
 
+interface PlatformBreakdown {
+  totalMarkets: number;
+  totalEvents: number;
+  singleOutcome: number;
+  multiOutcome: number;
+  marketsInMulti: number;
+}
+
+interface CategoryBreakdown {
+  polymarket: number;
+  kalshi: number;
+  total: number;
+}
+
 interface Stats {
   markets: {
     total: number;
@@ -53,6 +67,8 @@ interface Stats {
     active: number;
     closed: number;
   };
+  platformBreakdown?: Record<string, PlatformBreakdown>;
+  categories?: Record<string, CategoryBreakdown>;
 }
 
 interface Arb {
@@ -211,6 +227,66 @@ export default function Dashboard() {
                 </div>
               ))}
             </div>
+          </div>
+        )}
+
+        {/* Platform Breakdown */}
+        {stats?.platformBreakdown && Object.keys(stats.platformBreakdown).length > 0 && (
+          <div className="mb-6 grid grid-cols-1 md:grid-cols-2 gap-4">
+            {Object.entries(stats.platformBreakdown).map(([platform, data]) => (
+              <div key={platform} className="p-4 rounded-lg bg-terminal-card border border-terminal-border">
+                <div className="flex items-center gap-2 mb-3">
+                  <div className={`w-2 h-2 rounded-full ${platform === 'polymarket' ? 'bg-purple-400' : 'bg-blue-400'}`} />
+                  <h3 className="text-sm font-medium text-white capitalize">{platform}</h3>
+                </div>
+                <div className="grid grid-cols-2 gap-4 text-sm">
+                  <div>
+                    <p className="text-gray-500">Total Markets</p>
+                    <p className="text-xl font-mono text-white">{data.totalMarkets.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Events</p>
+                    <p className="text-xl font-mono text-white">{data.totalEvents.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Single Outcome</p>
+                    <p className="text-lg font-mono text-gray-300">{data.singleOutcome.toLocaleString()}</p>
+                  </div>
+                  <div>
+                    <p className="text-gray-500">Multi-Outcome</p>
+                    <p className="text-lg font-mono text-profit-mid">
+                      {data.multiOutcome.toLocaleString()}
+                      <span className="text-xs text-gray-500 ml-1">({data.marketsInMulti} markets)</span>
+                    </p>
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+
+        {/* Category Breakdown */}
+        {stats?.categories && Object.keys(stats.categories).length > 0 && (
+          <div className="mb-6 p-4 rounded-lg bg-terminal-card border border-terminal-border">
+            <h3 className="text-sm font-medium text-gray-400 mb-3">Markets by Category</h3>
+            <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-4 gap-3">
+              {Object.entries(stats.categories)
+                .sort(([, a], [, b]) => b.total - a.total)
+                .map(([category, data]) => (
+                  <div key={category} className="p-3 rounded bg-terminal-hover">
+                    <p className="text-sm font-medium text-white mb-1">{category}</p>
+                    <div className="flex items-center gap-2 text-xs">
+                      <span className="text-purple-400">{data.polymarket}</span>
+                      <span className="text-gray-600">/</span>
+                      <span className="text-blue-400">{data.kalshi}</span>
+                      <span className="text-gray-500 ml-auto">{data.total} total</span>
+                    </div>
+                  </div>
+                ))}
+            </div>
+            <p className="text-xs text-gray-500 mt-2">
+              <span className="text-purple-400">Purple</span> = Polymarket · <span className="text-blue-400">Blue</span> = Kalshi
+            </p>
           </div>
         )}
 

@@ -7,7 +7,7 @@
 
 import { query } from '../lib/db';
 import dome, { PolymarketMarket, KalshiMarket, MatchingMarketPlatform, OrderbookOrder, PolymarketOrderbookSnapshot, KalshiOrderbookSnapshot } from '../lib/dome-api';
-import { detectSingleMarketArb, detectCrossPlatformArb, trackArbPersistence, closeStaleArbs, PriceSnapshot } from '../lib/arb-detection';
+import { detectSingleMarketArb, detectCrossPlatformArb, detectMultiOutcomeArbs, trackArbPersistence, closeStaleArbs, PriceSnapshot } from '../lib/arb-detection';
 import { loadFees } from '../lib/fees';
 import { checkVolumeSpikes, VolumeAlert } from '../lib/volume-alerts';
 
@@ -169,15 +169,156 @@ async function upsertPolymarketMarket(market: PolymarketMarket): Promise<number>
 }
 
 /**
+ * Derive category and sport from Kalshi event_ticker patterns
+ */
+function getKalshiCategorySport(eventTicker: string, title: string): { category: string | null; sport: string | null } {
+  const ticker = eventTicker.toUpperCase();
+  
+  // Sports
+  if (ticker.includes('NBA') || ticker.includes('BASKETBALL')) {
+    return { category: 'Sports', sport: 'nba' };
+  }
+  if (ticker.includes('NFL') || ticker.includes('SB') || ticker.includes('FOOTBALL')) {
+    // Check if it's college football
+    if (ticker.includes('NCAAF') || ticker.includes('CFB') || title.toLowerCase().includes('college football')) {
+      return { category: 'Sports', sport: 'cfb' };
+    }
+    return { category: 'Sports', sport: 'nfl' };
+  }
+  if (ticker.includes('MLB') || ticker.includes('BASEBALL')) {
+    return { category: 'Sports', sport: 'mlb' };
+  }
+  if (ticker.includes('NHL') || ticker.includes('HOCKEY')) {
+    return { category: 'Sports', sport: 'nhl' };
+  }
+  if (ticker.includes('MARMAD') || ticker.includes('NCAAB') || title.toLowerCase().includes('college basketball')) {
+    return { category: 'Sports', sport: 'ncaab' };
+  }
+  if (ticker.includes('NCAAF') || ticker.includes('MICHCOACH')) {
+    return { category: 'Sports', sport: 'cfb' };
+  }
+  
+  // Politics
+  if (ticker.includes('PRES') || ticker.includes('SENATE') || ticker.includes('CONGRESS') || 
+      ticker.includes('ELECT') || ticker.includes('TRUMP') || ticker.includes('BIDEN')) {
+    return { category: 'Politics', sport: null };
+  }
+  if (ticker.includes('GOVTCUTS') || ticker.includes('TARIFF')) {
+    return { category: 'Politics', sport: null };
+  }
+  
+  // Finance/Fed
+  if (ticker.includes('FED') || ticker.includes('FOMC') || ticker.includes('RATE')) {
+    return { category: 'Finance', sport: null };
+  }
+  if (ticker.includes('INX') || ticker.includes('SPX') || ticker.includes('DOW') || ticker.includes('NASDAQ')) {
+    return { category: 'Finance', sport: null };
+  }
+  
+  // Crypto
+  if (ticker.includes('BTC') || ticker.includes('ETH') || ticker.includes('CRYPTO')) {
+    return { category: 'Crypto', sport: null };
+  }
+  
+  // Tech/AI
+  if (ticker.includes('LLM') || ticker.includes('AI') || ticker.includes('GPT') || ticker.includes('GEMINI')) {
+    return { category: 'Tech', sport: null };
+  }
+  
+  // Geopolitics
+  if (ticker.includes('CHINA') || ticker.includes('RUSSIA') || ticker.includes('UKRAINE') || 
+      ticker.includes('IRAN') || ticker.includes('WAR') || ticker.includes('NATO')) {
+    return { category: 'Geopolitics', sport: null };
+  }
+  
+  // Entertainment/Culture
+  if (ticker.includes('MARRIAGE') || ticker.includes('SWIFT') || ticker.includes('RETIRE') ||
+      ticker.includes('OSCAR') || ticker.includes('GRAMMY') || ticker.includes('EMMY')) {
+    return { category: 'Entertainment', sport: null };
+  }
+  
+  // Business/Companies
+  if (ticker.includes('TIKTOK') || ticker.includes('ACQUI') || ticker.includes('TESLA') ||
+      ticker.includes('ROBOT') || ticker.includes('APPLE') || ticker.includes('GOOGLE')) {
+    return { category: 'Business', sport: null };
+  }
+  
+  // Health
+  if (ticker.includes('MEASLES') || ticker.includes('COVID') || ticker.includes('VACCINE') ||
+      ticker.includes('HEALTH') || ticker.includes('FDA')) {
+    return { category: 'Health', sport: null };
+  }
+  
+  // Try title-based detection as fallback
+  const lowerTitle = title.toLowerCase();
+  if (lowerTitle.includes('super bowl') || lowerTitle.includes('nfl') || lowerTitle.includes('pro football')) {
+    return { category: 'Sports', sport: 'nfl' };
+  }
+  if (lowerTitle.includes('nba') || lowerTitle.includes('pro basketball')) {
+    return { category: 'Sports', sport: 'nba' };
+  }
+  if (lowerTitle.includes('president') || lowerTitle.includes('election') || lowerTitle.includes('congress')) {
+    return { category: 'Politics', sport: null };
+  }
+  if (lowerTitle.includes('recession') || lowerTitle.includes('gdp') || lowerTitle.includes('unemployment')) {
+    return { category: 'Finance', sport: null };
+  }
+  if (lowerTitle.includes('attorney general') || lowerTitle.includes('secretary') || lowerTitle.includes('cabinet')) {
+    return { category: 'Politics', sport: null };
+  }
+  if (lowerTitle.includes('greenland') || lowerTitle.includes('canada') || lowerTitle.includes('territory')) {
+    return { category: 'Geopolitics', sport: null };
+  }
+  if (lowerTitle.includes('dogecoin') || lowerTitle.includes('doge')) {
+    return { category: 'Crypto', sport: null };
+  }
+  if (lowerTitle.includes('lebron') || lowerTitle.includes('giannis') || lowerTitle.includes('nba')) {
+    return { category: 'Sports', sport: 'nba' };
+  }
+  if (lowerTitle.includes('taylor swift') || lowerTitle.includes('married') || lowerTitle.includes('retire')) {
+    return { category: 'Entertainment', sport: null };
+  }
+  if (lowerTitle.includes('acquire') || lowerTitle.includes('tiktok') || lowerTitle.includes('robotaxi')) {
+    return { category: 'Business', sport: null };
+  }
+  if (lowerTitle.includes('xi jinping') || lowerTitle.includes('putin') || lowerTitle.includes('leader')) {
+    return { category: 'Geopolitics', sport: null };
+  }
+  if (lowerTitle.includes('senate') || lowerTitle.includes('republican') || lowerTitle.includes('democrat') ||
+      lowerTitle.includes('hegseth') || lowerTitle.includes('administration')) {
+    return { category: 'Politics', sport: null };
+  }
+  if (lowerTitle.includes('champions league') || lowerTitle.includes('world cup') || lowerTitle.includes('soccer') ||
+      lowerTitle.includes('arsenal') || lowerTitle.includes('barcelona') || lowerTitle.includes('portugal')) {
+    return { category: 'Sports', sport: 'soccer' };
+  }
+  if (lowerTitle.includes('xrp') || lowerTitle.includes('solana') || lowerTitle.includes('cardano')) {
+    return { category: 'Crypto', sport: null };
+  }
+  if (lowerTitle.includes('time') || lowerTitle.includes('person of the year') || lowerTitle.includes('magazine')) {
+    return { category: 'Entertainment', sport: null };
+  }
+  if (lowerTitle.includes('legislation') || lowerTitle.includes('aca') || lowerTitle.includes('bill')) {
+    return { category: 'Politics', sport: null };
+  }
+  
+  return { category: null, sport: null };
+}
+
+/**
  * Upsert a Kalshi market into the database
  */
 async function upsertKalshiMarket(market: KalshiMarket): Promise<number> {
+  const { category, sport } = getKalshiCategorySport(market.event_ticker, market.title);
+  
   const result = await query<{ id: number }>(
     `INSERT INTO markets (platform, platform_id, event_id, title, category, sport, status, resolution_date, outcome)
      VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      ON CONFLICT (platform, platform_id) 
      DO UPDATE SET 
        title = EXCLUDED.title,
+       category = COALESCE(EXCLUDED.category, markets.category),
+       sport = COALESCE(EXCLUDED.sport, markets.sport),
        status = EXCLUDED.status,
        resolution_date = EXCLUDED.resolution_date,
        outcome = EXCLUDED.outcome,
@@ -185,11 +326,11 @@ async function upsertKalshiMarket(market: KalshiMarket): Promise<number> {
      RETURNING id`,
     [
       'kalshi',
-      market.market_ticker, // Use market_ticker as platform_id
+      market.market_ticker,
       market.event_ticker,
       market.title,
-      null, // Kalshi doesn't have tags in same format
-      null, // Sport detection would need to parse title
+      category,
+      sport,
       market.status,
       market.end_time ? new Date(market.end_time * 1000) : null,
       market.result,
@@ -549,20 +690,21 @@ async function syncMarkets(): Promise<SyncStats> {
           console.log(`   📊 Progress: ${pricesFetched}/${highVolumeMarkets.length} prices fetched`);
         }
         
-        // Detect single-market arb
+        // Detect single-market arb using REAL order book data
         const snapshot: PriceSnapshot = {
           marketId: id,
           platform: 'polymarket',
           yesPrice: sideAPrice.price,
           noPrice: sideBPrice.price,
-          yesBid: sideAPrice.price * 0.99,
-          yesAsk: sideAPrice.price * 1.01,
-          noBid: sideBPrice.price * 0.99,
-          noAsk: sideBPrice.price * 1.01,
-          yesBidSize: 10000,
-          yesAskSize: 10000,
-          noBidSize: 10000,
-          noAskSize: 10000,
+          // Use actual order book bids if available, otherwise estimate
+          yesBid: sideAOb?.bid ?? sideAPrice.price * 0.99,
+          yesAsk: sideAOb?.ask ?? sideAPrice.price * 1.01,
+          noBid: sideBOb?.bid ?? sideBPrice.price * 0.99,
+          noAsk: sideBOb?.ask ?? sideBPrice.price * 1.01,
+          yesBidSize: sideAOb?.bidSize ?? 10000,
+          yesAskSize: sideAOb?.askSize ?? 10000,
+          noBidSize: sideBOb?.bidSize ?? 10000,
+          noAskSize: sideBOb?.askSize ?? 10000,
           volume24h: market.volume_1_week / 7,
         };
         
@@ -597,19 +739,21 @@ async function syncMarkets(): Promise<SyncStats> {
         await insertKalshiSnapshot(id, normalizedLastPrice, market.volume_24h, market.volume, ob ?? undefined);
         stats.snapshotsTaken++;
         
-        // Detect single-market arb
+        // Detect single-market arb using REAL order book data
+        const noPrice = 1 - normalizedLastPrice;
         const snapshot: PriceSnapshot = {
           marketId: id,
           platform: 'kalshi',
           yesPrice: normalizedLastPrice,
-          noPrice: 1 - normalizedLastPrice,
-          yesBid: normalizedLastPrice * 0.99,
-          yesAsk: normalizedLastPrice * 1.01,
-          noBid: (1 - normalizedLastPrice) * 0.99,
-          noAsk: (1 - normalizedLastPrice) * 1.01,
-          yesBidSize: 5000,
+          noPrice,
+          // Use actual order book bids if available, otherwise estimate
+          yesBid: ob?.yesBid ?? normalizedLastPrice * 0.99,
+          yesAsk: normalizedLastPrice * 1.01, // Kalshi only gives bid side
+          noBid: ob?.noBid ?? noPrice * 0.99,
+          noAsk: noPrice * 1.01,
+          yesBidSize: ob?.yesBidSize ?? 5000,
           yesAskSize: 5000,
-          noBidSize: 5000,
+          noBidSize: ob?.noBidSize ?? 5000,
           noAskSize: 5000,
           volume24h: market.volume_24h,
         };
@@ -828,7 +972,28 @@ async function syncMarkets(): Promise<SyncStats> {
       console.warn('   ⚠️ Volume spike check failed:', err);
     }
     
-    // 6. Close stale arbs
+    // 6. Detect multi-outcome arbs
+    console.log('🎲 Checking for multi-outcome arbs...');
+    try {
+      const polyMultiArbs = await detectMultiOutcomeArbs('polymarket');
+      const kalshiMultiArbs = await detectMultiOutcomeArbs('kalshi');
+      const allMultiArbs = [...polyMultiArbs, ...kalshiMultiArbs];
+      
+      for (const arb of allMultiArbs) {
+        await trackArbPersistence(arb);
+        stats.arbsDetected++;
+        console.log(`   🎯 Multi-outcome arb: ${arb.eventName} (${arb.outcomeCount} outcomes, ${arb.netSpreadPct.toFixed(1)}% net)`);
+      }
+      
+      if (allMultiArbs.length === 0) {
+        console.log('   No multi-outcome arbs detected');
+      }
+    } catch (err) {
+      stats.errors.push(`Multi-outcome arb check failed: ${err}`);
+      console.warn('   ⚠️ Multi-outcome arb check failed:', err);
+    }
+    
+    // 7. Close stale arbs
     stats.arbsClosed = await closeStaleArbs(10);
     if (stats.arbsClosed > 0) {
       console.log(`   Closed ${stats.arbsClosed} stale arbs`);
