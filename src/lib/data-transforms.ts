@@ -48,9 +48,12 @@ export function extractEventName(
   
   // Polymarket: Extract event from title patterns
   const patterns = [
-    // Presidential elections
+    // Presidential elections - Party-based (Democrats/Republicans winning election)
+    { regex: /\b(Democrats|Republicans)\b.*(\d{4}) US [Pp]residential [Ee]lection/i, group: '$2 US Presidential Election (Party)' },
+    // Presidential elections - Candidate-based (individual candidates)
+    { regex: /(\d{4}) US [Pp]residential [Ee]lection/i, group: '$1 US Presidential Election (Candidate)' },
+    // Presidential nominations/primaries
     { regex: /(\d{4}) (Democratic|Republican) presidential (nomination|primary)/i, group: '$1 $2 Presidential $3' },
-    { regex: /(\d{4}) US [Pp]residential [Ee]lection/i, group: '$1 US Presidential Election' },
     // Sports championships
     { regex: /Super Bowl (\d{4})/i, group: 'Super Bowl $1' },
     { regex: /(\d{4}) (NBA|NFL|MLB|NHL) (Finals|Championship|Playoffs)/i, group: '$1 $2 $3' },
