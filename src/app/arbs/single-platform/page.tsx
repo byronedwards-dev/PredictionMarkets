@@ -312,7 +312,7 @@ export default function SinglePlatformArbsPage() {
         {/* Explanation */}
         <div className="mb-6 p-3 rounded-lg bg-terminal-card/50 border border-terminal-border text-sm text-gray-400">
           <strong className="text-white">How it works:</strong> Single-platform arbs occur when you can buy both sides 
-          (YES + NO) or all outcomes for less than the guaranteed $1 payout. The "sum" shown on each card is the total 
+          (YES + NO) or all outcomes for less than the guaranteed $1 payout. The &quot;sum&quot; shown on each card is the total 
           cost to execute the strategy.
         </div>
 

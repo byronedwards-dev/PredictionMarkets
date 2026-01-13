@@ -812,7 +812,7 @@ export default function PairsPage() {
         <div className="mt-8 text-sm text-gray-500">
           <p>
             Sports markets are auto-matched via Dome API. Election markets can be manually linked 
-            using the "Link Markets" tab. Linked pairs enable cross-platform price comparison and arbitrage detection.
+            using the &quot;Link Markets&quot; tab. Linked pairs enable cross-platform price comparison and arbitrage detection.
           </p>
         </div>
       </main>
