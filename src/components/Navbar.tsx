@@ -9,15 +9,13 @@ import {
   BarChart3, 
   Settings,
   Activity,
-  GitCompare,
-  Vote
+  GitCompare
 } from 'lucide-react';
 
 const navItems = [
   { href: '/', label: 'Dashboard', icon: LayoutDashboard },
   { href: '/markets', label: 'Markets', icon: TrendingUp },
-  { href: '/pairs', label: 'Pairs', icon: GitCompare },
-  { href: '/discover', label: 'Elections', icon: Vote },
+  { href: '/pairs', label: 'Cross-Platform', icon: GitCompare },
   { href: '/arbs', label: 'Arbitrage', icon: BarChart3 },
   { href: '/volume', label: 'Volume Alerts', icon: Activity },
   { href: '/settings', label: 'Settings', icon: Settings },
