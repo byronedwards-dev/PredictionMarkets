@@ -212,17 +212,21 @@ export default function MarketDetailPage() {
                 </p>
               )}
             </div>
-            {market.external_url && (
-              <a
-                href={market.external_url}
-                target="_blank"
-                rel="noopener noreferrer"
-                className="flex items-center gap-2 px-4 py-2 rounded-lg bg-terminal-card border border-terminal-border text-gray-400 hover:text-white hover:bg-terminal-hover transition-all"
-              >
-                <ExternalLink className="w-4 h-4" />
-                View on {market.platform === 'polymarket' ? 'Polymarket' : 'Kalshi'}
-              </a>
-            )}
+            <a
+              href={
+                market.platform === 'polymarket'
+                  ? (market.event_id 
+                      ? `https://polymarket.com/event/${market.event_id}`
+                      : `https://polymarket.com/markets?query=${encodeURIComponent(market.title)}`)
+                  : `https://kalshi.com/markets/${market.platform_id}`
+              }
+              target="_blank"
+              rel="noopener noreferrer"
+              className="flex items-center gap-2 px-4 py-2 rounded-lg bg-terminal-card border border-terminal-border text-gray-400 hover:text-white hover:bg-terminal-hover transition-all"
+            >
+              <ExternalLink className="w-4 h-4" />
+              View on {market.platform === 'polymarket' ? 'Polymarket' : 'Kalshi'}
+            </a>
           </div>
         </div>
 

@@ -55,6 +55,7 @@ export async function GET(request: NextRequest) {
     const minVolume = searchParams.get('minVolume');
     const hasArb = searchParams.get('hasArb');
     const groupByEvent = searchParams.get('groupByEvent') !== 'false'; // Default to grouped
+    const hideExpired = searchParams.get('hideExpired') !== 'false'; // Default: hide markets past resolution date
     const limit = parseInt(searchParams.get('limit') || '200');
     const offset = parseInt(searchParams.get('offset') || '0');
 
@@ -145,6 +146,11 @@ export async function GET(request: NextRequest) {
       sql += ` AND (ps.yes_price IS NULL OR (ps.yes_price > 0.02 AND ps.yes_price < 0.98))`;
     }
 
+    // Filter out markets past their resolution date
+    if (hideExpired) {
+      sql += ` AND (m.resolution_date IS NULL OR m.resolution_date > NOW())`;
+    }
+
     // Order by volume for initial fetch
     sql += ` ORDER BY ps.volume_24h DESC NULLS LAST`;
     sql += ` LIMIT $${paramIndex++} OFFSET $${paramIndex++}`;
@@ -211,6 +217,9 @@ export async function GET(request: NextRequest) {
     }
     if (hideResolved && status === 'open') {
       countSql += ` AND (ps.yes_price IS NULL OR (ps.yes_price > 0.02 AND ps.yes_price < 0.98))`;
+    }
+    if (hideExpired) {
+      countSql += ` AND (m.resolution_date IS NULL OR m.resolution_date > NOW())`;
     }
 
     const countResult = await query<{ total: string }>(countSql, countParams);

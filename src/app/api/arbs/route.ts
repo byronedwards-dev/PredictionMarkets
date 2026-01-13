@@ -39,8 +39,9 @@ export async function GET(request: NextRequest) {
     }
 
     if (type) {
-      sql += ` AND a.type = $${paramIndex++}`;
-      params.push(type);
+      const types = type.split(',');
+      sql += ` AND a.type = ANY($${paramIndex++})`;
+      params.push(types);
     }
 
     if (quality) {
@@ -63,15 +64,8 @@ export async function GET(request: NextRequest) {
 
     const result = await query(sql, params);
 
-    // Get summary stats
-    const statsResult = await query<{
-      total: string;
-      executable: string;
-      thin: string;
-      theoretical: string;
-      avg_spread: string;
-      total_deployable: string;
-    }>(`
+    // Build stats query with SAME filters as main query (except quality - we want breakdown)
+    let statsSql = `
       SELECT 
         COUNT(*)::TEXT as total,
         COUNT(*) FILTER (WHERE quality = 'executable')::TEXT as executable,
@@ -81,7 +75,36 @@ export async function GET(request: NextRequest) {
         SUM(max_deployable_usd)::TEXT as total_deployable
       FROM arb_opportunities
       WHERE resolved_at IS NULL
-    `);
+    `;
+    const statsParams: unknown[] = [];
+    let statsParamIndex = 1;
+
+    // Apply type filter to stats (important for cross_platform vs single_platform pages)
+    if (type) {
+      const types = type.split(',');
+      statsSql += ` AND type = ANY($${statsParamIndex++})`;
+      statsParams.push(types);
+    }
+
+    // Apply spread/deployable filters to stats
+    if (minSpread) {
+      statsSql += ` AND net_spread_pct >= $${statsParamIndex++}`;
+      statsParams.push(parseFloat(minSpread));
+    }
+
+    if (minDeployable) {
+      statsSql += ` AND max_deployable_usd >= $${statsParamIndex++}`;
+      statsParams.push(parseFloat(minDeployable));
+    }
+
+    const statsResult = await query<{
+      total: string;
+      executable: string;
+      thin: string;
+      theoretical: string;
+      avg_spread: string;
+      total_deployable: string;
+    }>(statsSql, statsParams);
 
     const stats = statsResult.rows[0];
 

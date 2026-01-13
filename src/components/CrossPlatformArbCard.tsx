@@ -1,10 +1,10 @@
 'use client';
 
-import { cn, formatCurrency, formatPercent, formatRelativeTime, formatDuration, getQualityColor, getQualityBgColor, getPlatformColor } from '@/lib/utils';
-import { ChevronDown, ChevronUp, AlertTriangle, Zap, Clock, DollarSign } from 'lucide-react';
+import { cn, formatCurrency, formatPercent, formatRelativeTime, formatDuration, getQualityColor, getQualityBgColor } from '@/lib/utils';
+import { ChevronDown, ChevronUp, AlertTriangle, Clock, ExternalLink, ArrowRight } from 'lucide-react';
 import { useState } from 'react';
 
-interface ArbCardProps {
+interface CrossPlatformArbCardProps {
   arb: {
     id: number;
     type: string;
@@ -18,15 +18,13 @@ interface ArbCardProps {
     last_seen_at: string;
     snapshot_count: number;
     duration_seconds: number;
-    market_title?: string;
-    platform?: string;
     poly_title?: string;
     kalshi_title?: string;
     details: Record<string, unknown>;
   };
 }
 
-export function ArbCard({ arb }: ArbCardProps) {
+export function CrossPlatformArbCard({ arb }: CrossPlatformArbCardProps) {
   const [expanded, setExpanded] = useState(false);
   
   const grossSpread = parseFloat(arb.gross_spread_pct);
@@ -35,33 +33,26 @@ export function ArbCard({ arb }: ArbCardProps) {
   const maxDeployable = parseFloat(arb.max_deployable_usd);
   const potentialProfit = parseFloat(arb.capital_weighted_spread);
   
-  const isCrossPlatform = arb.type === 'cross_platform';
-  const isMultiOutcome = arb.type === 'multi_outcome';
-  
-  // Extract titles - try direct fields first, then fallback to details JSON
+  // Extract from details
   const details = arb.details || {};
-  const polyTitle = arb.poly_title || (details.polyTitle as string) || null;
-  const kalshiTitle = arb.kalshi_title || (details.kalshiTitle as string) || null;
-  const marketTitle = arb.market_title || (details.marketTitle as string) || null;
-  const eventName = (details.eventName as string) || null;
+  const polyTitle = arb.poly_title || (details.polyTitle as string) || 'Polymarket Market';
+  const kalshiTitle = arb.kalshi_title || (details.kalshiTitle as string) || 'Kalshi Market';
+  const arbDirection = (details.arbDirection as string) || 'poly_yes_kalshi_no';
+  const strategy = (details.strategy as string) || '';
   
-  // Build display title based on arb type
-  let title: string;
-  if (isMultiOutcome) {
-    title = eventName || 'Multi-Outcome Opportunity';
-  } else if (isCrossPlatform) {
-    if (polyTitle && kalshiTitle) {
-      title = `${polyTitle} ↔ ${kalshiTitle}`;
-    } else if (polyTitle) {
-      title = polyTitle;
-    } else if (kalshiTitle) {
-      title = kalshiTitle;
-    } else {
-      title = 'Cross-Platform Opportunity';
-    }
-  } else {
-    title = marketTitle || 'Single Market Opportunity';
-  }
+  // Extract prices from details
+  const polyYesBid = (details as any).polySnapshot?.yesBid || 0;
+  const polyNoBid = (details as any).polySnapshot?.noBid || 0;
+  const kalshiYesBid = (details as any).kalshiSnapshot?.yesBid || 0;
+  const kalshiNoBid = (details as any).kalshiSnapshot?.noBid || 0;
+  
+  // Determine buy/sell sides based on direction
+  const buyPolyYes = arbDirection === 'poly_yes_kalshi_no';
+  const polyBuyPrice = buyPolyYes ? polyYesBid : polyNoBid;
+  const polySide = buyPolyYes ? 'YES' : 'NO';
+  const kalshiBuyPrice = buyPolyYes ? kalshiNoBid : kalshiYesBid;
+  const kalshiSide = buyPolyYes ? 'NO' : 'YES';
+  const totalCost = polyBuyPrice + kalshiBuyPrice;
   
   return (
     <div className={cn(
@@ -77,21 +68,10 @@ export function ArbCard({ arb }: ArbCardProps) {
         <div className="flex items-start justify-between gap-4">
           <div className="flex-1 min-w-0">
             {/* Type badge */}
-            <div className="flex items-center gap-2 mb-2">
-              {isCrossPlatform ? (
-                <span className="px-2 py-0.5 text-xs font-medium rounded bg-accent-purple/20 text-accent-purple border border-accent-purple/30">
-                  CROSS-PLATFORM
-                </span>
-              ) : (
-                <span className={cn(
-                  'px-2 py-0.5 text-xs font-medium rounded',
-                  getPlatformColor(arb.platform || 'unknown'),
-                  arb.platform === 'polymarket' ? 'bg-purple-500/20 border border-purple-500/30' :
-                  'bg-blue-500/20 border border-blue-500/30'
-                )}>
-                  {arb.platform?.toUpperCase() || 'UNKNOWN'}
-                </span>
-              )}
+            <div className="flex items-center gap-2 mb-3">
+              <span className="px-2 py-0.5 text-xs font-medium rounded bg-accent-purple/20 text-accent-purple border border-accent-purple/30">
+                CROSS-PLATFORM
+              </span>
               <span className={cn(
                 'px-2 py-0.5 text-xs font-medium rounded border',
                 getQualityBgColor(arb.quality),
@@ -101,11 +81,76 @@ export function ArbCard({ arb }: ArbCardProps) {
               </span>
             </div>
             
-            {/* Title */}
-            <h3 className="font-medium text-white truncate">{title}</h3>
+            {/* Two-column market display */}
+            <div className="grid grid-cols-2 gap-3 mb-3">
+              {/* Polymarket side */}
+              <div className="p-3 rounded-lg bg-terminal-bg border border-purple-500/30">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-purple-400">POLYMARKET</span>
+                  <span className={cn(
+                    'text-xs px-1.5 py-0.5 rounded font-medium',
+                    buyPolyYes ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                  )}>
+                    Buy {polySide}
+                  </span>
+                </div>
+                <p className="text-sm text-gray-300 line-clamp-2 mb-2" title={polyTitle}>
+                  {polyTitle}
+                </p>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">{polySide} bid:</span>
+                  <span className="font-mono text-white">{(polyBuyPrice * 100).toFixed(1)}¢</span>
+                </div>
+              </div>
+              
+              {/* Kalshi side */}
+              <div className="p-3 rounded-lg bg-terminal-bg border border-blue-500/30">
+                <div className="flex items-center justify-between mb-2">
+                  <span className="text-xs font-medium text-blue-400">KALSHI</span>
+                  <span className={cn(
+                    'text-xs px-1.5 py-0.5 rounded font-medium',
+                    !buyPolyYes ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
+                  )}>
+                    Buy {kalshiSide}
+                  </span>
+                </div>
+                <p className="text-sm text-gray-300 line-clamp-2 mb-2" title={kalshiTitle}>
+                  {kalshiTitle}
+                </p>
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-500">{kalshiSide} bid:</span>
+                  <span className="font-mono text-white">{(kalshiBuyPrice * 100).toFixed(1)}¢</span>
+                </div>
+              </div>
+            </div>
+            
+            {/* Combined cost display */}
+            {totalCost > 0 && (
+              <div className="p-3 rounded-lg bg-terminal-bg border border-terminal-border mb-3">
+                <div className="flex items-center justify-between text-sm">
+                  <span className="text-gray-400">
+                    Total cost ({polySide} + {kalshiSide}):
+                  </span>
+                  <span className={cn(
+                    'font-mono font-bold',
+                    totalCost < 1 ? 'text-profit-low' : 'text-white'
+                  )}>
+                    {(totalCost * 100).toFixed(1)}¢
+                  </span>
+                </div>
+                {totalCost < 1 && (
+                  <div className="flex items-center justify-between text-sm mt-1">
+                    <span className="text-profit-mid">Gross Spread:</span>
+                    <span className="font-mono font-bold text-profit-low">
+                      {((1 - totalCost) * 100).toFixed(1)}¢ ({formatPercent(grossSpread)})
+                    </span>
+                  </div>
+                )}
+              </div>
+            )}
             
             {/* Quick stats */}
-            <div className="flex items-center gap-4 mt-2 text-sm">
+            <div className="flex items-center gap-4 text-sm">
               <span className="text-profit-low font-mono font-medium">
                 {formatPercent(netSpread)} net
               </span>
@@ -123,7 +168,7 @@ export function ArbCard({ arb }: ArbCardProps) {
           <div className="flex items-center gap-3">
             <div className="text-right">
               <p className="text-xs text-gray-400">Potential Profit</p>
-              <p className="font-mono font-bold text-profit-low">
+              <p className="font-mono font-bold text-profit-low text-lg">
                 {formatCurrency(potentialProfit)}
               </p>
             </div>
@@ -139,6 +184,16 @@ export function ArbCard({ arb }: ArbCardProps) {
       {/* Expanded details */}
       {expanded && (
         <div className="border-t border-terminal-border p-4 bg-terminal-bg/50 space-y-4 animate-fade-in">
+          {/* Strategy explanation */}
+          {strategy && (
+            <div className="p-3 rounded-lg bg-accent-cyan/10 border border-accent-cyan/30">
+              <h4 className="text-xs font-medium text-accent-cyan uppercase tracking-wide mb-2">
+                Strategy
+              </h4>
+              <p className="text-sm text-gray-300">{strategy}</p>
+            </div>
+          )}
+          
           {/* Fee breakdown */}
           <div>
             <h4 className="text-xs font-medium text-gray-400 uppercase tracking-wide mb-2">
@@ -149,9 +204,13 @@ export function ArbCard({ arb }: ArbCardProps) {
                 <span className="text-gray-400">Gross Spread</span>
                 <span className="text-white">{formatPercent(grossSpread)}</span>
               </div>
-              <div className="flex justify-between text-loss-mid">
-                <span>Platform Fees</span>
-                <span>-{totalFees.toFixed(2)}%</span>
+              <div className="flex justify-between text-purple-400">
+                <span>Polymarket Fee</span>
+                <span>-{((details.polyFeePct as number) || totalFees / 2).toFixed(2)}%</span>
+              </div>
+              <div className="flex justify-between text-blue-400">
+                <span>Kalshi Fee</span>
+                <span>-{((details.kalshiFeePct as number) || totalFees / 2).toFixed(2)}%</span>
               </div>
               <div className="flex justify-between pt-1 border-t border-terminal-border">
                 <span className="text-gray-400">Net Spread</span>

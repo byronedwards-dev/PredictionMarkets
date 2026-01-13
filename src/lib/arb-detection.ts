@@ -275,6 +275,9 @@ export function detectCrossPlatformArb(
  * 
  * An arb exists when the sum of YES asks for all outcomes < 1.00
  * This means you can buy all outcomes for less than the guaranteed $1 payout
+ * 
+ * For Kalshi: Uses event_id (event_ticker) to group related markets - reliable!
+ * For Polymarket: Falls back to title pattern matching since they don't have explicit event grouping
  */
 export async function detectMultiOutcomeArbs(
   platform: 'polymarket' | 'kalshi'
@@ -282,91 +285,164 @@ export async function detectMultiOutcomeArbs(
   const arbs: MultiOutcomeArb[] = [];
   const fee = getTotalFee(platform);
   
-  // Get all open markets grouped by event patterns
-  // We identify events by common title patterns
-  const eventPatterns = [
-    { pattern: '%Super Bowl%', name: 'Super Bowl Winner' },
-    { pattern: '%NBA Finals%', name: 'NBA Finals Winner' },
-    { pattern: '%Champions League%winner%', name: 'Champions League Winner' },
-    { pattern: '%Premier League%winner%', name: 'Premier League Winner' },
-    { pattern: '%Democratic presidential nomination%', name: 'Dem 2028 Nominee' },
-    { pattern: '%Republican presidential nomination%', name: 'GOP 2028 Nominee' },
-    { pattern: '%Fed Chair%', name: 'Fed Chair Nominee' },
-    { pattern: '%Treasury Secretary%', name: 'Treasury Secretary' },
-    { pattern: '%World Series%', name: 'World Series Winner' },
-    { pattern: '%Stanley Cup%', name: 'Stanley Cup Winner' },
-  ];
-  
-  for (const { pattern, name } of eventPatterns) {
-    const result = await query<{
-      market_id: number;
-      title: string;
-      yes_ask: string;
-      yes_ask_size: string;
+  if (platform === 'kalshi') {
+    // KALSHI: Use event_id (event_ticker) for reliable grouping
+    // Find events with 3+ open markets (multi-outcome events)
+    const eventsResult = await query<{
+      event_id: string;
+      market_count: string;
+      sample_title: string;
     }>(`
-      SELECT m.id as market_id, m.title, ps.yes_ask, ps.yes_ask_size
+      SELECT 
+        m.event_id,
+        COUNT(*)::TEXT as market_count,
+        MIN(m.title) as sample_title
       FROM markets m
-      JOIN LATERAL (
-        SELECT yes_ask, yes_ask_size 
-        FROM price_snapshots 
-        WHERE market_id = m.id 
-        ORDER BY snapshot_at DESC 
-        LIMIT 1
-      ) ps ON true
-      WHERE m.platform = $1 
+      WHERE m.platform = 'kalshi'
         AND m.status = 'open'
-        AND m.title ILIKE $2
-        AND ps.yes_ask > 0
-        AND ps.yes_ask < 1
-      ORDER BY ps.yes_ask DESC
-    `, [platform, pattern]);
+        AND m.event_id IS NOT NULL
+      GROUP BY m.event_id
+      HAVING COUNT(*) >= 3
+      ORDER BY COUNT(*) DESC
+      LIMIT 50
+    `);
     
-    if (result.rows.length < 3) continue; // Need at least 3 outcomes
+    for (const event of eventsResult.rows) {
+      // Get all markets for this event with latest prices
+      const marketsResult = await query<{
+        market_id: number;
+        title: string;
+        yes_ask: string;
+        yes_ask_size: string;
+      }>(`
+        SELECT m.id as market_id, m.title, ps.yes_ask, ps.yes_ask_size
+        FROM markets m
+        JOIN LATERAL (
+          SELECT yes_ask, yes_ask_size 
+          FROM price_snapshots 
+          WHERE market_id = m.id 
+          ORDER BY snapshot_at DESC 
+          LIMIT 1
+        ) ps ON true
+        WHERE m.platform = 'kalshi'
+          AND m.event_id = $1
+          AND m.status = 'open'
+          AND ps.yes_ask > 0
+          AND ps.yes_ask < 1
+        ORDER BY ps.yes_ask DESC
+      `, [event.event_id]);
+      
+      if (marketsResult.rows.length < 3) continue;
+      
+      const arb = evaluateMultiOutcomeArb(
+        marketsResult.rows,
+        event.event_id, // Use event_ticker as the name
+        platform,
+        fee
+      );
+      
+      if (arb) arbs.push(arb);
+    }
+  } else {
+    // POLYMARKET: Fall back to title pattern matching
+    // Since Polymarket uses condition_id per market (1:1 ratio), we have to guess groupings
+    const eventPatterns = [
+      { pattern: '%Super Bowl%', name: 'Super Bowl Winner' },
+      { pattern: '%NBA Finals%', name: 'NBA Finals Winner' },
+      { pattern: '%Champions League%winner%', name: 'Champions League Winner' },
+      { pattern: '%Premier League%winner%', name: 'Premier League Winner' },
+      { pattern: '%Democratic presidential nomination%', name: 'Dem 2028 Nominee' },
+      { pattern: '%Republican presidential nomination%', name: 'GOP 2028 Nominee' },
+      { pattern: '%Fed Chair%', name: 'Fed Chair Nominee' },
+      { pattern: '%Treasury Secretary%', name: 'Treasury Secretary' },
+      { pattern: '%World Series%', name: 'World Series Winner' },
+      { pattern: '%Stanley Cup%', name: 'Stanley Cup Winner' },
+    ];
     
-    const outcomes = result.rows.map(r => ({
-      marketId: r.market_id,
-      title: r.title,
-      yesAsk: parseFloat(r.yes_ask),
-      askSize: parseFloat(r.yes_ask_size),
-    }));
-    
-    // Calculate totals
-    const totalCost = outcomes.reduce((sum, o) => sum + o.yesAsk, 0);
-    const grossSpread = 1 - totalCost;
-    
-    // Fee is percentage of total investment
-    const totalFees = fee * totalCost;
-    const netSpread = grossSpread - totalFees;
-    
-    // Skip if not profitable
-    if (netSpread < THRESHOLDS.MIN_NET_SPREAD) continue;
-    
-    // Liquidity is the minimum across all outcomes
-    const maxDeployable = Math.min(...outcomes.map(o => o.askSize));
-    
-    const quality = classifyQuality(netSpread, maxDeployable);
-    if (!quality) continue;
-    
-    const strategy = `Buy all ${outcomes.length} outcomes for ${(totalCost * 100).toFixed(1)}¢, collect $1. Net: ${(netSpread * 100).toFixed(1)}¢`;
-    
-    arbs.push({
-      eventName: name,
-      platform,
-      type: 'multi_outcome',
-      quality,
-      outcomeCount: outcomes.length,
-      outcomes,
-      totalCost,
-      grossSpreadPct: grossSpread * 100,
-      totalFeesPct: totalFees * 100,
-      netSpreadPct: netSpread * 100,
-      maxDeployableUsd: maxDeployable,
-      capitalWeightedProfit: netSpread * maxDeployable,
-      strategy,
-    });
+    for (const { pattern, name } of eventPatterns) {
+      const result = await query<{
+        market_id: number;
+        title: string;
+        yes_ask: string;
+        yes_ask_size: string;
+      }>(`
+        SELECT m.id as market_id, m.title, ps.yes_ask, ps.yes_ask_size
+        FROM markets m
+        JOIN LATERAL (
+          SELECT yes_ask, yes_ask_size 
+          FROM price_snapshots 
+          WHERE market_id = m.id 
+          ORDER BY snapshot_at DESC 
+          LIMIT 1
+        ) ps ON true
+        WHERE m.platform = 'polymarket'
+          AND m.status = 'open'
+          AND m.title ILIKE $1
+          AND ps.yes_ask > 0
+          AND ps.yes_ask < 1
+        ORDER BY ps.yes_ask DESC
+      `, [pattern]);
+      
+      if (result.rows.length < 3) continue;
+      
+      const arb = evaluateMultiOutcomeArb(result.rows, name, platform, fee);
+      if (arb) arbs.push(arb);
+    }
   }
   
   return arbs;
+}
+
+/**
+ * Helper to evaluate a multi-outcome arb opportunity
+ */
+function evaluateMultiOutcomeArb(
+  rows: Array<{ market_id: number; title: string; yes_ask: string; yes_ask_size: string }>,
+  eventName: string,
+  platform: string,
+  fee: number
+): MultiOutcomeArb | null {
+  const outcomes = rows.map(r => ({
+    marketId: r.market_id,
+    title: r.title,
+    yesAsk: parseFloat(r.yes_ask),
+    askSize: parseFloat(r.yes_ask_size),
+  }));
+  
+  // Calculate totals
+  const totalCost = outcomes.reduce((sum, o) => sum + o.yesAsk, 0);
+  const grossSpread = 1 - totalCost;
+  
+  // Fee is percentage of total investment
+  const totalFees = fee * totalCost;
+  const netSpread = grossSpread - totalFees;
+  
+  // Skip if not profitable
+  if (netSpread < THRESHOLDS.MIN_NET_SPREAD) return null;
+  
+  // Liquidity is the minimum across all outcomes
+  const maxDeployable = Math.min(...outcomes.map(o => o.askSize));
+  
+  const quality = classifyQuality(netSpread, maxDeployable);
+  if (!quality) return null;
+  
+  const strategy = `Buy all ${outcomes.length} outcomes for ${(totalCost * 100).toFixed(1)}¢, collect $1. Net: ${(netSpread * 100).toFixed(1)}¢`;
+  
+  return {
+    eventName,
+    platform,
+    type: 'multi_outcome',
+    quality,
+    outcomeCount: outcomes.length,
+    outcomes,
+    totalCost,
+    grossSpreadPct: grossSpread * 100,
+    totalFeesPct: totalFees * 100,
+    netSpreadPct: netSpread * 100,
+    maxDeployableUsd: maxDeployable,
+    capitalWeightedProfit: netSpread * maxDeployable,
+    strategy,
+  };
 }
 
 /**

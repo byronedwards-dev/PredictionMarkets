@@ -126,6 +126,12 @@ interface UnifiedPair {
     polyTeam1: string | null;
     kalshiTeam1: string | null;
   };
+  // Flag for markets that are essentially resolved (extreme prices)
+  hasExtremePrice?: boolean;
+  extremePriceDetails?: {
+    polyExtreme: boolean;
+    kalshiExtreme: boolean;
+  } | null;
 }
 
 export async function GET(request: NextRequest) {
@@ -134,6 +140,8 @@ export async function GET(request: NextRequest) {
     const view = searchParams.get('view') || 'confirmed'; // 'confirmed' or 'suggestions'
     const category = searchParams.get('category'); // 'sports', 'elections', 'all'
     const activeOnly = searchParams.get('activeOnly') !== 'false';
+    const hideResolved = searchParams.get('hideResolved') !== 'false'; // Default: hide extreme price pairs
+    const hidePastGames = searchParams.get('hidePastGames') !== 'false'; // Default: hide past game dates
 
     if (view === 'suggestions') {
       // Return unconfirmed suggestions (from discover logic)
@@ -196,7 +204,9 @@ export async function GET(request: NextRequest) {
         JOIN markets km ON mp.kalshi_market_id = km.id
         LEFT JOIN LATERAL (SELECT * FROM price_snapshots WHERE market_id = pm.id ORDER BY snapshot_at DESC LIMIT 1) pps ON true
         LEFT JOIN LATERAL (SELECT * FROM price_snapshots WHERE market_id = km.id ORDER BY snapshot_at DESC LIMIT 1) kps ON true
-        ${activeOnly ? "WHERE pm.status = 'open' AND km.status = 'open'" : ''}
+        WHERE 1=1
+        ${activeOnly ? "AND pm.status = 'open' AND km.status = 'open'" : ''}
+        ${hidePastGames ? "AND (mp.game_date IS NULL OR mp.game_date >= CURRENT_DATE)" : ''}
         ORDER BY mp.game_date ASC NULLS LAST
         LIMIT 100
       `);
@@ -270,8 +280,26 @@ export async function GET(request: NextRequest) {
       }
     }
 
-    // Sort by price difference (most interesting first)
-    allPairs.sort((a, b) => {
+    // Filter out resolved/extreme price pairs if requested
+    let filteredPairs = allPairs;
+    const resolvedCount = allPairs.filter(p => p.hasExtremePrice).length;
+    
+    if (hideResolved) {
+      filteredPairs = allPairs.filter(p => !p.hasExtremePrice);
+    }
+
+    // Sort: active arb opportunities first (by spread), then by price diff
+    filteredPairs.sort((a, b) => {
+      // Extreme price pairs go to the bottom
+      if (a.hasExtremePrice && !b.hasExtremePrice) return 1;
+      if (!a.hasExtremePrice && b.hasExtremePrice) return -1;
+      
+      // Then by spread (arb opportunities first)
+      const aSpread = a.spread.value || 0;
+      const bSpread = b.spread.value || 0;
+      if (aSpread !== bSpread) return bSpread - aSpread;
+      
+      // Then by price difference
       const aDiff = a.spread.priceDiff || 0;
       const bDiff = b.spread.priceDiff || 0;
       return bDiff - aDiff;
@@ -283,8 +311,9 @@ export async function GET(request: NextRequest) {
 
     return NextResponse.json({
       view: 'confirmed',
-      pairs: allPairs,
-      total: allPairs.length,
+      pairs: filteredPairs,
+      total: filteredPairs.length,
+      resolvedHidden: hideResolved ? resolvedCount : 0,
       categories,
       sports,
     });
@@ -293,6 +322,11 @@ export async function GET(request: NextRequest) {
     console.error('Pairs API error:', error);
     return NextResponse.json({ error: 'Failed to fetch market pairs' }, { status: 500 });
   }
+}
+
+// Check if a market has extreme prices (essentially resolved)
+function isExtremePrice(yesPrice: number): boolean {
+  return yesPrice > 0.95 || yesPrice < 0.05;
 }
 
 // Transform Dome API pair
@@ -312,12 +346,27 @@ function transformPair(row: Record<string, unknown>, source: 'dome_api', categor
   const effectiveKalshiYes = sidesInverted ? kalshiNo : kalshiYes;
   const effectiveKalshiNo = sidesInverted ? kalshiYes : kalshiNo;
 
-  const spreadBuyPolyYes = polyYes > 0 && effectiveKalshiNo > 0 ? (1 - polyYes - effectiveKalshiNo) : null;
-  const spreadBuyKalshiYes = effectiveKalshiYes > 0 && polyNo > 0 ? (1 - effectiveKalshiYes - polyNo) : null;
+  // Check if either market has extreme prices (essentially resolved)
+  const polyExtreme = isExtremePrice(polyYes);
+  const kalshiExtreme = isExtremePrice(kalshiYes);
+  const hasExtremePrice = polyExtreme || kalshiExtreme;
+
+  // Only calculate spread if neither market is at extreme prices
+  let bestSpread: number | null = null;
+  let spreadDirection: string | null = null;
   
-  const bestSpread = Math.max(spreadBuyPolyYes || -999, spreadBuyKalshiYes || -999);
-  const spreadDirection = spreadBuyPolyYes !== null && spreadBuyPolyYes >= (spreadBuyKalshiYes || -999) 
-    ? 'buy_poly_yes' : 'buy_kalshi_yes';
+  if (!hasExtremePrice) {
+    const spreadBuyPolyYes = polyYes > 0 && effectiveKalshiNo > 0 ? (1 - polyYes - effectiveKalshiNo) : null;
+    const spreadBuyKalshiYes = effectiveKalshiYes > 0 && polyNo > 0 ? (1 - effectiveKalshiYes - polyNo) : null;
+    
+    const calcSpread = Math.max(spreadBuyPolyYes || -999, spreadBuyKalshiYes || -999);
+    // Only report positive spreads (actual arb opportunities)
+    if (calcSpread > 0) {
+      bestSpread = calcSpread;
+      spreadDirection = spreadBuyPolyYes !== null && spreadBuyPolyYes >= (spreadBuyKalshiYes || -999) 
+        ? 'buy_poly_yes' : 'buy_kalshi_yes';
+    }
+  }
 
   return {
     id: `dome_${row.pair_id}`,
@@ -357,8 +406,8 @@ function transformPair(row: Record<string, unknown>, source: 'dome_api', categor
       snapshotAt: row.kalshi_snapshot_at as string || null,
     },
     spread: {
-      value: bestSpread > -999 ? bestSpread : null,
-      direction: bestSpread > -999 ? spreadDirection : null,
+      value: bestSpread,
+      direction: spreadDirection,
       priceDiff: polyYes > 0 && effectiveKalshiYes > 0 ? Math.abs(polyYes - effectiveKalshiYes) : null,
     },
     alignment: {
@@ -366,6 +415,12 @@ function transformPair(row: Record<string, unknown>, source: 'dome_api', categor
       polyTeam1: polyTeams.team1,
       kalshiTeam1: kalshiTeams.team1,
     },
+    // Flag for markets that are essentially resolved
+    hasExtremePrice,
+    extremePriceDetails: hasExtremePrice ? {
+      polyExtreme,
+      kalshiExtreme,
+    } : null,
   };
 }
 
@@ -376,8 +431,29 @@ function transformUserLink(row: Record<string, unknown>): UnifiedPair | null {
   const kalshiYes = normalizePrice(parseFloat(row.kalshi_yes_price as string || '0'));
   const kalshiNo = normalizePrice(parseFloat(row.kalshi_no_price as string || '0'));
 
+  // Check for extreme prices
+  const polyExtreme = isExtremePrice(polyYes);
+  const kalshiExtreme = isExtremePrice(kalshiYes);
+  const hasExtremePrice = polyExtreme || kalshiExtreme;
+
   // For elections, sides are typically aligned (both YES = same outcome)
   const priceDiff = Math.abs(polyYes - kalshiYes);
+
+  // Calculate cross-platform spread for elections too
+  let bestSpread: number | null = null;
+  let spreadDirection: string | null = null;
+  
+  if (!hasExtremePrice && polyYes > 0 && kalshiYes > 0) {
+    const spreadBuyPolyYes = polyYes > 0 && kalshiNo > 0 ? (1 - polyYes - kalshiNo) : null;
+    const spreadBuyKalshiYes = kalshiYes > 0 && polyNo > 0 ? (1 - kalshiYes - polyNo) : null;
+    
+    const calcSpread = Math.max(spreadBuyPolyYes || -999, spreadBuyKalshiYes || -999);
+    if (calcSpread > 0) {
+      bestSpread = calcSpread;
+      spreadDirection = spreadBuyPolyYes !== null && spreadBuyPolyYes >= (spreadBuyKalshiYes || -999) 
+        ? 'buy_poly_yes' : 'buy_kalshi_yes';
+    }
+  }
 
   return {
     id: `user_${row.link_id}`,
@@ -415,8 +491,8 @@ function transformUserLink(row: Record<string, unknown>): UnifiedPair | null {
       snapshotAt: row.kalshi_snapshot_at as string || null,
     },
     spread: {
-      value: null, // Elections don't have the same spread calculation
-      direction: null,
+      value: bestSpread,
+      direction: spreadDirection,
       priceDiff,
     },
     alignment: {
@@ -424,6 +500,11 @@ function transformUserLink(row: Record<string, unknown>): UnifiedPair | null {
       polyTeam1: null,
       kalshiTeam1: null,
     },
+    hasExtremePrice,
+    extremePriceDetails: hasExtremePrice ? {
+      polyExtreme,
+      kalshiExtreme,
+    } : null,
   };
 }
 

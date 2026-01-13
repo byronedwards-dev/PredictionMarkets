@@ -101,9 +101,17 @@ export async function GET(
     );
 
     // Build external link
+    // Polymarket: condition_id links to the market, Kalshi: use market ticker
     let externalUrl: string | null = null;
     if (market.platform === 'polymarket') {
-      externalUrl = `https://polymarket.com/event/${market.platform_id}`;
+      // Use condition_id (stored as event_id) for reliable linking
+      // Polymarket URL format: /event/{condition_id}
+      if (market.event_id) {
+        externalUrl = `https://polymarket.com/event/${market.event_id}`;
+      } else {
+        // Fallback to search
+        externalUrl = `https://polymarket.com/markets?query=${encodeURIComponent(market.title)}`;
+      }
     } else if (market.platform === 'kalshi') {
       externalUrl = `https://kalshi.com/markets/${market.platform_id}`;
     }

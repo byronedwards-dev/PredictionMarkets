@@ -165,6 +165,17 @@ async function insertSnapshot(
 }
 
 /**
+ * Get best available volume metric from a Polymarket market
+ */
+function getBestVolume(market: PolymarketMarket): number {
+  if (market.volume_total > 0) return market.volume_total;
+  if (market.volume_1_year > 0) return market.volume_1_year;
+  if (market.volume_1_month > 0) return market.volume_1_month;
+  if (market.volume_1_week > 0) return market.volume_1_week;
+  return 0;
+}
+
+/**
  * Main sync function
  */
 async function syncMarkets(): Promise<SyncStats> {
@@ -177,6 +188,17 @@ async function syncMarkets(): Promise<SyncStats> {
   
   const startTime = Date.now();
   console.log(`\n🔄 [${new Date().toISOString()}] Starting sync...`);
+  
+  // Record sync start in database
+  let syncId: number | null = null;
+  try {
+    const syncResult = await query<{ id: number }>(
+      `INSERT INTO sync_status (sync_type, status) VALUES ('railway_worker', 'running') RETURNING id`
+    );
+    syncId = syncResult.rows[0].id;
+  } catch (err) {
+    console.warn('   ⚠️ Could not record sync start:', err);
+  }
   
   try {
     await loadFees();
@@ -221,9 +243,9 @@ async function syncMarkets(): Promise<SyncStats> {
       }
     }
     
-    // 4. Fetch prices for high-volume Polymarket markets
+    // 4. Fetch prices for high-volume Polymarket markets (use best available volume metric)
     const highVolumeMarkets = polyMarketsWithIds.filter(({ market }) => 
-      market.volume_total >= MIN_VOLUME_FOR_PRICE_FETCH
+      getBestVolume(market) >= MIN_VOLUME_FOR_PRICE_FETCH
     );
     
     let pricesFetched = 0;
@@ -234,9 +256,10 @@ async function syncMarkets(): Promise<SyncStats> {
           dome.polymarket.getMarketPrice(market.side_b.id),
         ]);
         
-        // Use volume_1_week/7 as 24h estimate, volume_total as all-time
+        // Use volume_1_week/7 as 24h estimate, best available as all-time
         const vol24h = market.volume_1_week ? market.volume_1_week / 7 : 0;
-        await insertSnapshot(id, sideAPrice.price, sideBPrice.price, vol24h, market.volume_total);
+        const volumeAllTime = getBestVolume(market);
+        await insertSnapshot(id, sideAPrice.price, sideBPrice.price, vol24h, volumeAllTime);
         stats.snapshotsTaken++;
         pricesFetched++;
         
@@ -306,9 +329,42 @@ async function syncMarkets(): Promise<SyncStats> {
       console.log(`   ⚠️  ${stats.errors.length} errors`);
     }
     
+    // Record sync completion
+    if (syncId) {
+      try {
+        await query(
+          `UPDATE sync_status SET 
+            completed_at = NOW(), 
+            status = 'completed',
+            markets_synced = $1,
+            arbs_detected = $2
+           WHERE id = $3`,
+          [stats.marketsUpserted, stats.arbsDetected, syncId]
+        );
+      } catch (err) {
+        console.warn('   ⚠️ Could not record sync completion:', err);
+      }
+    }
+    
   } catch (error) {
     console.error('❌ Sync failed:', error);
     stats.errors.push(String(error));
+    
+    // Record sync failure
+    if (syncId) {
+      try {
+        await query(
+          `UPDATE sync_status SET 
+            completed_at = NOW(), 
+            status = 'failed',
+            error_message = $1
+           WHERE id = $2`,
+          [String(error), syncId]
+        );
+      } catch (err) {
+        console.warn('   ⚠️ Could not record sync failure:', err);
+      }
+    }
   }
   
   return stats;

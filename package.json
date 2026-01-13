@@ -10,7 +10,6 @@
     "test": "jest",
     "test:watch": "jest --watch",
     "db:migrate": "node scripts/migrate.js",
-    "jobs:sync": "node scripts/run-sync.js",
     "jobs:backfill": "npx tsx src/jobs/backfill.ts",
     "pm2:start": "pm2 start ecosystem.config.js",
     "pm2:stop": "pm2 stop market-sync",

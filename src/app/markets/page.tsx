@@ -36,6 +36,8 @@ interface EventGroup {
   has_arb: boolean;
   best_arb_spread: number | null;
   markets: Market[];
+  // Computed client-side
+  sum_all_yes?: number;
 }
 
 interface Filters {
@@ -72,6 +74,17 @@ function EventCard({ event, isExpanded, onToggle }: {
   isExpanded: boolean; 
   onToggle: () => void;
 }) {
+  // Calculate sum of all YES prices (for multi-outcome events)
+  const sumAllYes = event.markets.reduce((sum, m) => {
+    const yesPrice = parseFloat(m.yes_bid || '0');
+    return sum + (yesPrice > 0 && yesPrice < 1 ? yesPrice : 0);
+  }, 0);
+  
+  // Only show sum for multi-outcome events (3+ markets)
+  const isMultiOutcome = event.market_count >= 3;
+  const hasArbOpportunity = isMultiOutcome && sumAllYes > 0 && sumAllYes < 0.98;
+  const isOverround = isMultiOutcome && sumAllYes > 1.02;
+  
   return (
     <div className="rounded-lg border border-terminal-border bg-terminal-card overflow-hidden">
       {/* Event Header */}
@@ -105,6 +118,31 @@ function EventCard({ event, isExpanded, onToggle }: {
         </div>
         
         <div className="flex items-center gap-6">
+          {/* Multi-outcome sum indicator */}
+          {isMultiOutcome && sumAllYes > 0 && (
+            <div className={cn(
+              'text-right px-2 py-1 rounded',
+              hasArbOpportunity && 'bg-profit-low/20',
+              isOverround && 'bg-loss-low/20'
+            )}>
+              <span className={cn(
+                'text-sm font-mono font-semibold',
+                hasArbOpportunity ? 'text-profit-low' : 
+                isOverround ? 'text-loss-mid' : 'text-gray-400'
+              )}>
+                Σ {(sumAllYes * 100).toFixed(1)}%
+              </span>
+              <p className={cn(
+                'text-xs',
+                hasArbOpportunity ? 'text-profit-low/70' : 
+                isOverround ? 'text-loss-mid/70' : 'text-gray-600'
+              )}>
+                {hasArbOpportunity ? `${((1 - sumAllYes) * 100).toFixed(1)}% arb` : 
+                 isOverround ? 'overround' : 'sum of YES'}
+              </p>
+            </div>
+          )}
+          
           {event.has_arb && (
             <div className="flex items-center gap-1 text-profit-low">
               <Zap className="w-4 h-4" />
