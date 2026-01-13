@@ -243,10 +243,9 @@ async function syncMarkets(): Promise<SyncStats> {
       }
     }
     
-    // 4. Fetch prices for high-volume Polymarket markets (use best available volume metric)
-    const highVolumeMarkets = polyMarketsWithIds.filter(({ market }) => 
-      getBestVolume(market) >= MIN_VOLUME_FOR_PRICE_FETCH
-    );
+    // 4. Fetch prices for all Polymarket markets (already filtered by Dome's min_volume: 5000)
+    // All markets already passed Dome's min_volume filter, so fetch prices for all
+    const highVolumeMarkets = polyMarketsWithIds;
     
     let pricesFetched = 0;
     await processBatch(highVolumeMarkets, BATCH_SIZE, async ({ market, id }) => {
