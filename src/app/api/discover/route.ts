@@ -142,8 +142,13 @@ export async function GET(request: NextRequest) {
     `);
 
     // Helper to check if price is in "interesting" range (not essentially resolved)
-    const isInterestingPrice = (price: number) => 
-      price >= MIN_INTERESTING_PRICE && price <= MAX_INTERESTING_PRICE;
+    // Note: Price filtering disabled for now due to Kalshi price normalization issues
+    // Once sync is fixed, can re-enable: price >= MIN_INTERESTING_PRICE && price <= MAX_INTERESTING_PRICE
+    const isInterestingPrice = (price: number) => {
+      // Normalize price first (Kalshi data may still be corrupted as cents)
+      const normalized = price >= 1 ? price / 100 : price;
+      return normalized >= MIN_INTERESTING_PRICE && normalized <= MAX_INTERESTING_PRICE;
+    };
 
     // Filter to election-related markets with minimum volume and interesting prices
     const polyElection = polyMarkets.rows.filter(m => {
