@@ -29,6 +29,12 @@ interface SyncStats {
   errors: string[];
 }
 
+function normalizeProbability(price: number): number {
+  const normalized = price >= 1 ? price / 100 : price;
+  if (!Number.isFinite(normalized)) return 0;
+  return Math.max(0, Math.min(1, normalized));
+}
+
 /**
  * Process items in batches
  */
@@ -293,18 +299,20 @@ async function syncMarkets(): Promise<SyncStats> {
         stats.marketsUpserted++;
         
         // Kalshi has actual 24h volume and total volume
-        await insertSnapshot(id, market.last_price, 1 - market.last_price, market.volume_24h, market.volume);
+        const kalshiYes = normalizeProbability(market.last_price);
+        const kalshiNo = 1 - kalshiYes;
+        await insertSnapshot(id, kalshiYes, kalshiNo, market.volume_24h, market.volume);
         stats.snapshotsTaken++;
         
         const snapshot: PriceSnapshot = {
           marketId: id,
           platform: 'kalshi',
-          yesPrice: market.last_price,
-          noPrice: 1 - market.last_price,
-          yesBid: market.last_price * 0.99,
-          yesAsk: market.last_price * 1.01,
-          noBid: (1 - market.last_price) * 0.99,
-          noAsk: (1 - market.last_price) * 1.01,
+          yesPrice: kalshiYes,
+          noPrice: kalshiNo,
+          yesBid: kalshiYes * 0.99,
+          yesAsk: kalshiYes * 1.01,
+          noBid: kalshiNo * 0.99,
+          noAsk: kalshiNo * 1.01,
           yesBidSize: 5000, yesAskSize: 5000, noBidSize: 5000, noAskSize: 5000,
           volume24h: market.volume_24h,
         };

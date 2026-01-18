@@ -8,6 +8,7 @@ import { formatCurrency, formatPercent, cn } from '@/lib/utils';
 interface MarketSide {
   id: number;
   platformId: string;
+  eventId?: string | null;
   title: string;
   status: string;
   yesPrice: number;
@@ -61,6 +62,7 @@ interface Suggestion {
   polyMarket: {
     id: number;
     platformId: string;
+    eventId?: string | null;
     title: string;
     yesPrice: number;
     volume: number;
@@ -105,6 +107,17 @@ function PairCard({ pair, onUnlink }: { pair: Pair; onUnlink?: () => void }) {
   const sidesInverted = pair.alignment?.sidesInverted || false;
   const effectiveKalshiYes = sidesInverted ? pair.kalshi.noPrice : pair.kalshi.yesPrice;
   const effectiveKalshiNo = sidesInverted ? pair.kalshi.yesPrice : pair.kalshi.noPrice;
+  // Polymarket: Use the market slug for /market/ URLs
+  const polyUrl = pair.polymarket.platformId
+    ? `https://polymarket.com/market/${pair.polymarket.platformId}`
+    : 'https://polymarket.com';
+  // Kalshi: Extract series ticker (lowercase) from platformId (e.g., KXFEDCHAIRNOM-29-RREI -> kxfedchairnom)
+  const kalshiSeriesTicker = pair.kalshi.platformId
+    ? pair.kalshi.platformId.split('-')[0].toLowerCase()
+    : null;
+  const kalshiUrl = kalshiSeriesTicker
+    ? `https://kalshi.com/markets/${kalshiSeriesTicker}`
+    : 'https://kalshi.com';
   
   const priceDiff = pair.polymarket.yesPrice - effectiveKalshiYes;
   const priceDiffPct = Math.abs(priceDiff) * 100;
@@ -197,7 +210,7 @@ function PairCard({ pair, onUnlink }: { pair: Pair; onUnlink?: () => void }) {
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-medium text-purple-400">POLYMARKET</span>
             <a
-              href={`https://polymarket.com/event/${pair.polymarket.platformId}`}
+              href={polyUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="text-gray-500 hover:text-white transition-colors"
@@ -230,7 +243,7 @@ function PairCard({ pair, onUnlink }: { pair: Pair; onUnlink?: () => void }) {
           <div className="flex items-center justify-between mb-3">
             <span className="text-sm font-medium text-blue-400">KALSHI</span>
             <a
-              href={`https://kalshi.com/markets/${pair.kalshi.platformId}`}
+              href={kalshiUrl}
               target="_blank"
               rel="noopener noreferrer"
               className="text-gray-500 hover:text-white transition-colors"
@@ -309,7 +322,11 @@ function SuggestionCard({
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-purple-400">POLYMARKET</span>
             <a
-              href={`https://polymarket.com/event/${suggestion.polyMarket.platformId}`}
+              href={
+                suggestion.polyMarket.platformId
+                  ? `https://polymarket.com/market/${suggestion.polyMarket.platformId}`
+                  : 'https://polymarket.com'
+              }
               target="_blank"
               rel="noopener noreferrer"
               className="text-gray-500 hover:text-white"

@@ -15,6 +15,7 @@ interface MarketRow {
   id: number;
   platform: string;
   platform_id: string;
+  event_id: string | null;
   title: string;
   category: string | null;
   status: string;
@@ -111,7 +112,7 @@ export async function GET(request: NextRequest) {
 
     // Get Polymarket election markets
     const polyMarkets = await query<MarketRow>(`
-      SELECT m.id, m.platform, m.platform_id, m.title, m.category, m.status,
+      SELECT m.id, m.platform, m.platform_id, m.event_id, m.title, m.category, m.status,
              ps.yes_price, ps.volume_24h, ps.volume_all_time
       FROM markets m
       LEFT JOIN LATERAL (
@@ -127,7 +128,7 @@ export async function GET(request: NextRequest) {
 
     // Get Kalshi election markets
     const kalshiMarkets = await query<MarketRow>(`
-      SELECT m.id, m.platform, m.platform_id, m.title, m.category, m.status,
+      SELECT m.id, m.platform, m.platform_id, m.event_id, m.title, m.category, m.status,
              ps.yes_price, ps.volume_24h, ps.volume_all_time
       FROM markets m
       LEFT JOIN LATERAL (
@@ -168,6 +169,7 @@ export async function GET(request: NextRequest) {
       polyMarket: {
         id: number;
         platformId: string;
+        eventId?: string | null;
         title: string;
         yesPrice: number;
         volume: number;
@@ -198,6 +200,7 @@ export async function GET(request: NextRequest) {
           polyMarket: {
             id: poly.id,
             platformId: poly.platform_id,
+            eventId: poly.event_id,
             title: poly.title,
             yesPrice: parseFloat(poly.yes_price || '0'),
             volume: parseFloat(poly.volume_all_time || '0'),

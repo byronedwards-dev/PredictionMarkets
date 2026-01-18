@@ -13,6 +13,7 @@ export type ArbQuality = 'executable' | 'thin' | 'theoretical';
 export interface PriceSnapshot {
   marketId: number;
   platform: string;
+  platformId?: string;  // External ID for building URLs
   yesPrice: number;
   noPrice: number;
   yesBid: number;
@@ -69,6 +70,23 @@ export interface CrossPlatformArb {
   
   quality: ArbQuality;
   strategy: string;
+  
+  // Snapshot prices for UI display
+  polySnapshot: {
+    yesBid: number;
+    noBid: number;
+    yesAsk: number;
+    noAsk: number;
+  };
+  kalshiSnapshot: {
+    yesBid: number;
+    noBid: number;
+    yesAsk: number;
+    noAsk: number;
+  };
+  // Platform IDs for building URLs
+  polyPlatformId?: string;
+  kalshiPlatformId?: string;
 }
 
 export interface MultiOutcomeArb {
@@ -267,6 +285,22 @@ export function detectCrossPlatformArb(
     capitalWeightedProfit: best.spread * best.deploy,
     quality,
     strategy,
+    // Include snapshot prices for UI display
+    polySnapshot: {
+      yesBid: polySnapshot.yesBid,
+      noBid: polySnapshot.noBid,
+      yesAsk: polySnapshot.yesAsk,
+      noAsk: polySnapshot.noAsk,
+    },
+    kalshiSnapshot: {
+      yesBid: kalshiSnapshot.yesBid,
+      noBid: kalshiSnapshot.noBid,
+      yesAsk: kalshiSnapshot.yesAsk,
+      noAsk: kalshiSnapshot.noAsk,
+    },
+    // Platform IDs for building URLs
+    polyPlatformId: polySnapshot.platformId,
+    kalshiPlatformId: kalshiSnapshot.platformId,
   };
 }
 

@@ -18,6 +18,7 @@ interface Suggestion {
   polyMarket: {
     id: number;
     platformId: string;
+    eventId?: string | null;
     title: string;
     yesPrice: number;
     volume: number;
@@ -82,7 +83,11 @@ function SuggestionCard({
           <div className="flex items-center justify-between mb-2">
             <span className="text-sm font-medium text-purple-400">POLYMARKET</span>
             <a
-              href={`https://polymarket.com/event/${suggestion.polyMarket.platformId}`}
+              href={
+                suggestion.polyMarket.platformId
+                  ? `https://polymarket.com/market/${suggestion.polyMarket.platformId}`
+                  : 'https://polymarket.com'
+              }
               target="_blank"
               rel="noopener noreferrer"
               className="text-gray-500 hover:text-white"

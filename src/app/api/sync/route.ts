@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { detectCrossPlatformArb, trackArbPersistence, closeStaleArbs, PriceSnapshot } from '@/lib/arb-detection';
 import { loadFees } from '@/lib/fees';
+import { getTeamAlignment } from '@/lib/team-alignment';
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
@@ -74,8 +75,9 @@ async function getLatestSnapshot(marketId: number): Promise<PriceSnapshot | null
     no_ask_size: string;
     volume_24h: string;
     platform: string;
+    platform_id: string;
   }>(
-    `SELECT ps.*, m.platform FROM price_snapshots ps
+    `SELECT ps.*, m.platform, m.platform_id FROM price_snapshots ps
      JOIN markets m ON m.id = ps.market_id
      WHERE ps.market_id = $1
      ORDER BY ps.snapshot_at DESC LIMIT 1`,
@@ -88,6 +90,7 @@ async function getLatestSnapshot(marketId: number): Promise<PriceSnapshot | null
   return {
     marketId: row.market_id,
     platform: row.platform,
+    platformId: row.platform_id,
     yesPrice: parseFloat(row.yes_price),
     noPrice: parseFloat(row.no_price),
     yesBid: parseFloat(row.yes_bid),
@@ -102,6 +105,24 @@ async function getLatestSnapshot(marketId: number): Promise<PriceSnapshot | null
   };
 }
 
+function alignSnapshot(snapshot: PriceSnapshot, invertSides: boolean): PriceSnapshot {
+  if (!invertSides) return snapshot;
+
+  return {
+    ...snapshot,
+    yesPrice: snapshot.noPrice,
+    noPrice: snapshot.yesPrice,
+    yesBid: snapshot.noBid,
+    noBid: snapshot.yesBid,
+    yesAsk: snapshot.noAsk,
+    noAsk: snapshot.yesAsk,
+    yesBidSize: snapshot.noBidSize,
+    noBidSize: snapshot.yesBidSize,
+    yesAskSize: snapshot.noAskSize,
+    noAskSize: snapshot.yesAskSize,
+  };
+}
+
 // POST: Quick arb re-evaluation (fast) or request full sync
 export async function POST(request: NextRequest) {
   try {
@@ -113,6 +134,7 @@ export async function POST(request: NextRequest) {
       await loadFees();
       
       // Get all market pairs (both from Dome API and user-linked)
+      // Filter out markets that are past their resolution date
       const pairs = await query<{
         pair_id: number;
         poly_market_id: number;
@@ -130,6 +152,8 @@ export async function POST(request: NextRequest) {
         JOIN markets pm ON pm.id = mp.poly_market_id
         JOIN markets km ON km.id = mp.kalshi_market_id
         WHERE pm.status = 'open' AND km.status = 'open'
+          AND (pm.resolution_date IS NULL OR pm.resolution_date > NOW())
+          AND (km.resolution_date IS NULL OR km.resolution_date > NOW())
       `);
 
       let arbsFound = 0;
@@ -139,9 +163,12 @@ export async function POST(request: NextRequest) {
         
         if (!polySnapshot || !kalshiSnapshot) continue;
         
+        const alignment = getTeamAlignment(pair.poly_title, pair.kalshi_title);
+        const alignedKalshi = alignSnapshot(kalshiSnapshot, alignment.sidesInverted);
+
         const crossArb = detectCrossPlatformArb(
           polySnapshot,
-          kalshiSnapshot,
+          alignedKalshi,
           pair.pair_id,
           pair.poly_title,
           pair.kalshi_title

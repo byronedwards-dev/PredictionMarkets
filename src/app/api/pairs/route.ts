@@ -1,83 +1,20 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { query } from '@/lib/db';
 import { findBestMatches, isElectionRelated } from '@/lib/fuzzy-match';
+import { getTotalFee } from '@/lib/fees';
+import { getTeamAlignment } from '@/lib/team-alignment';
 
 // Force dynamic rendering
 export const dynamic = 'force-dynamic';
 
 // Helper to normalize price (handle corrupted Kalshi data)
 function normalizePrice(price: number): number {
-  return price >= 1 ? price / 100 : price;
+  const normalized = price >= 1 ? price / 100 : price;
+  if (!Number.isFinite(normalized)) return 0;
+  return Math.max(0, Math.min(1, normalized));
 }
 
-// Helper to extract team names from titles for alignment detection
-function extractTeams(title: string): { team1: string | null; team2: string | null } {
-  const vsMatch = title.match(/^(.+?)\s+(?:vs\.?|versus)\s+(.+?)(?:\s+Winner)?$/i);
-  if (vsMatch) {
-    return { team1: vsMatch[1].trim(), team2: vsMatch[2].trim() };
-  }
-  
-  const atMatch = title.match(/^(.+?)\s+at\s+(.+?)\s+Winner\??$/i);
-  if (atMatch) {
-    return { team1: atMatch[1].trim(), team2: atMatch[2].trim() };
-  }
-  
-  return { team1: null, team2: null };
-}
-
-// Check if team names match (handles city vs mascot differences)
-function teamsMatch(name1: string | null, name2: string | null): boolean {
-  if (!name1 || !name2) return false;
-  
-  const n1 = name1.toLowerCase();
-  const n2 = name2.toLowerCase();
-  
-  if (n1.includes(n2) || n2.includes(n1)) return true;
-  
-  const mappings: Record<string, string[]> = {
-    '49ers': ['san francisco', 'sf', 'niners'],
-    'eagles': ['philadelphia', 'philly'],
-    'bills': ['buffalo'],
-    'jaguars': ['jacksonville', 'jags'],
-    'chiefs': ['kansas city', 'kc'],
-    'ravens': ['baltimore'],
-    'cowboys': ['dallas'],
-    'packers': ['green bay', 'gb'],
-    'lions': ['detroit'],
-    'bears': ['chicago'],
-    'vikings': ['minnesota'],
-    'commanders': ['washington'],
-    'giants': ['new york', 'ny giants'],
-    'jets': ['new york', 'ny jets'],
-    'dolphins': ['miami'],
-    'patriots': ['new england'],
-    'steelers': ['pittsburgh'],
-    'bengals': ['cincinnati'],
-    'browns': ['cleveland'],
-    'texans': ['houston'],
-    'colts': ['indianapolis', 'indy'],
-    'titans': ['tennessee'],
-    'broncos': ['denver'],
-    'chargers': ['los angeles', 'la chargers'],
-    'raiders': ['las vegas', 'lv'],
-    'seahawks': ['seattle'],
-    'cardinals': ['arizona'],
-    'rams': ['los angeles', 'la rams'],
-    'saints': ['new orleans'],
-    'buccaneers': ['tampa bay', 'bucs'],
-    'falcons': ['atlanta'],
-    'panthers': ['carolina'],
-  };
-  
-  for (const [mascot, cities] of Object.entries(mappings)) {
-    const allNames = [mascot, ...cities];
-    const n1Match = allNames.some(name => n1.includes(name));
-    const n2Match = allNames.some(name => n2.includes(name));
-    if (n1Match && n2Match) return true;
-  }
-  
-  return false;
-}
+const MIN_NET_SPREAD = 0.02;
 
 interface UnifiedPair {
   id: string; // prefixed with source
@@ -89,6 +26,7 @@ interface UnifiedPair {
   polymarket: {
     id: number;
     platformId: string;
+    eventId?: string | null;
     title: string;
     status: string;
     yesPrice: number;
@@ -142,6 +80,7 @@ export async function GET(request: NextRequest) {
     const activeOnly = searchParams.get('activeOnly') !== 'false';
     const hideResolved = searchParams.get('hideResolved') !== 'false'; // Default: hide extreme price pairs
     const hidePastGames = searchParams.get('hidePastGames') !== 'false'; // Default: hide past game dates
+    const minSpread = parseFloat(searchParams.get('minSpread') || '0');
 
     if (view === 'suggestions') {
       // Return unconfirmed suggestions (from discover logic)
@@ -160,6 +99,7 @@ export async function GET(request: NextRequest) {
         match_confidence: string | null;
         poly_id: number;
         poly_platform_id: string;
+        poly_event_id: string | null;
         poly_title: string;
         poly_status: string;
         poly_yes_price: string | null;
@@ -187,7 +127,7 @@ export async function GET(request: NextRequest) {
       }>(`
         SELECT 
           mp.id as pair_id, mp.sport, mp.game_date, mp.match_confidence,
-          pm.id as poly_id, pm.platform_id as poly_platform_id, pm.title as poly_title, pm.status as poly_status,
+          pm.id as poly_id, pm.platform_id as poly_platform_id, pm.event_id as poly_event_id, pm.title as poly_title, pm.status as poly_status,
           pps.yes_price as poly_yes_price, pps.no_price as poly_no_price,
           pps.yes_bid as poly_yes_bid, pps.yes_ask as poly_yes_ask,
           pps.no_bid as poly_no_bid, pps.no_ask as poly_no_ask,
@@ -224,6 +164,7 @@ export async function GET(request: NextRequest) {
         match_score: string | null;
         poly_id: number;
         poly_platform_id: string;
+        poly_event_id: string | null;
         poly_title: string;
         poly_status: string;
         poly_yes_price: string | null;
@@ -251,7 +192,7 @@ export async function GET(request: NextRequest) {
       }>(`
         SELECT 
           uml.id as link_id, uml.match_score,
-          pm.id as poly_id, pm.platform_id as poly_platform_id, pm.title as poly_title, pm.status as poly_status,
+          pm.id as poly_id, pm.platform_id as poly_platform_id, pm.event_id as poly_event_id, pm.title as poly_title, pm.status as poly_status,
           pps.yes_price as poly_yes_price, pps.no_price as poly_no_price,
           pps.yes_bid as poly_yes_bid, pps.yes_ask as poly_yes_ask,
           pps.no_bid as poly_no_bid, pps.no_ask as poly_no_ask,
@@ -285,7 +226,11 @@ export async function GET(request: NextRequest) {
     const resolvedCount = allPairs.filter(p => p.hasExtremePrice).length;
     
     if (hideResolved) {
-      filteredPairs = allPairs.filter(p => !p.hasExtremePrice);
+      filteredPairs = filteredPairs.filter(p => !p.hasExtremePrice);
+    }
+
+    if (minSpread > 0) {
+      filteredPairs = filteredPairs.filter(p => (p.spread.value || 0) >= minSpread);
     }
 
     // Sort: active arb opportunities first (by spread), then by price diff
@@ -334,17 +279,21 @@ function transformPair(row: Record<string, unknown>, source: 'dome_api', categor
   const polyYes = normalizePrice(parseFloat(row.poly_yes_price as string || '0'));
   const polyNo = normalizePrice(parseFloat(row.poly_no_price as string || '0'));
   const kalshiYes = normalizePrice(parseFloat(row.kalshi_yes_price as string || '0'));
-  const kalshiNo = normalizePrice(parseFloat(row.kalshi_no_price as string || '0'));
+  // Compute Kalshi NO from YES (DB may have corrupted NO prices from old sync)
+  const kalshiNo = kalshiYes > 0 ? 1 - kalshiYes : 0;
 
-  const polyTeams = extractTeams(row.poly_title as string);
-  const kalshiTeams = extractTeams(row.kalshi_title as string);
-  
-  const team1Aligned = teamsMatch(polyTeams.team1, kalshiTeams.team1);
-  const team1InvertedMatch = teamsMatch(polyTeams.team1, kalshiTeams.team2);
-  const sidesInverted = !team1Aligned && team1InvertedMatch;
-  
+  const alignment = getTeamAlignment(row.poly_title as string, row.kalshi_title as string);
+  const sidesInverted = alignment.sidesInverted;
+
   const effectiveKalshiYes = sidesInverted ? kalshiNo : kalshiYes;
   const effectiveKalshiNo = sidesInverted ? kalshiYes : kalshiNo;
+  // Compute Kalshi bids from YES bid (DB may have corrupted NO bids)
+  const kalshiYesBid = normalizePrice(parseFloat(row.kalshi_yes_bid as string || '0'));
+  const kalshiNoBid = kalshiYesBid > 0 ? 1 - kalshiYesBid : 0;
+  const effectiveKalshiYesBid = sidesInverted ? kalshiNoBid : kalshiYesBid;
+  const effectiveKalshiNoBid = sidesInverted ? kalshiYesBid : kalshiNoBid;
+  const polyYesBid = normalizePrice(parseFloat(row.poly_yes_bid as string || '0'));
+  const polyNoBid = normalizePrice(parseFloat(row.poly_no_bid as string || '0'));
 
   // Check if either market has extreme prices (essentially resolved)
   const polyExtreme = isExtremePrice(polyYes);
@@ -356,14 +305,18 @@ function transformPair(row: Record<string, unknown>, source: 'dome_api', categor
   let spreadDirection: string | null = null;
   
   if (!hasExtremePrice) {
-    const spreadBuyPolyYes = polyYes > 0 && effectiveKalshiNo > 0 ? (1 - polyYes - effectiveKalshiNo) : null;
-    const spreadBuyKalshiYes = effectiveKalshiYes > 0 && polyNo > 0 ? (1 - effectiveKalshiYes - polyNo) : null;
-    
+    const totalFees = getTotalFee('polymarket') + getTotalFee('kalshi');
+    const spreadBuyPolyYes = polyYesBid > 0 && effectiveKalshiNoBid > 0
+      ? (1 - polyYesBid - effectiveKalshiNoBid) - totalFees
+      : null;
+    const spreadBuyKalshiYes = effectiveKalshiYesBid > 0 && polyNoBid > 0
+      ? (1 - effectiveKalshiYesBid - polyNoBid) - totalFees
+      : null;
+
     const calcSpread = Math.max(spreadBuyPolyYes || -999, spreadBuyKalshiYes || -999);
-    // Only report positive spreads (actual arb opportunities)
-    if (calcSpread > 0) {
+    if (calcSpread >= MIN_NET_SPREAD) {
       bestSpread = calcSpread;
-      spreadDirection = spreadBuyPolyYes !== null && spreadBuyPolyYes >= (spreadBuyKalshiYes || -999) 
+      spreadDirection = spreadBuyPolyYes !== null && spreadBuyPolyYes >= (spreadBuyKalshiYes || -999)
         ? 'buy_poly_yes' : 'buy_kalshi_yes';
     }
   }
@@ -378,6 +331,7 @@ function transformPair(row: Record<string, unknown>, source: 'dome_api', categor
     polymarket: {
       id: row.poly_id as number,
       platformId: row.poly_platform_id as string,
+      eventId: (row.poly_event_id as string) || null,
       title: row.poly_title as string,
       status: row.poly_status as string,
       yesPrice: polyYes,
@@ -397,10 +351,10 @@ function transformPair(row: Record<string, unknown>, source: 'dome_api', categor
       status: row.kalshi_status as string,
       yesPrice: kalshiYes,
       noPrice: kalshiNo,
-      yesBid: normalizePrice(parseFloat(row.kalshi_yes_bid as string || '0')),
-      yesAsk: normalizePrice(parseFloat(row.kalshi_yes_ask as string || '0')),
-      noBid: normalizePrice(parseFloat(row.kalshi_no_bid as string || '0')),
-      noAsk: normalizePrice(parseFloat(row.kalshi_no_ask as string || '0')),
+      yesBid: kalshiYesBid,
+      yesAsk: kalshiYesBid > 0 ? kalshiYesBid * 1.01 : 0,
+      noBid: kalshiNoBid,
+      noAsk: kalshiNoBid > 0 ? kalshiNoBid * 1.01 : 0,
       volume24h: parseFloat(row.kalshi_volume_24h as string || '0'),
       volumeAllTime: parseFloat(row.kalshi_volume_all_time as string || '0'),
       snapshotAt: row.kalshi_snapshot_at as string || null,
@@ -410,11 +364,7 @@ function transformPair(row: Record<string, unknown>, source: 'dome_api', categor
       direction: spreadDirection,
       priceDiff: polyYes > 0 && effectiveKalshiYes > 0 ? Math.abs(polyYes - effectiveKalshiYes) : null,
     },
-    alignment: {
-      sidesInverted,
-      polyTeam1: polyTeams.team1,
-      kalshiTeam1: kalshiTeams.team1,
-    },
+    alignment,
     // Flag for markets that are essentially resolved
     hasExtremePrice,
     extremePriceDetails: hasExtremePrice ? {
@@ -429,7 +379,8 @@ function transformUserLink(row: Record<string, unknown>): UnifiedPair | null {
   const polyYes = normalizePrice(parseFloat(row.poly_yes_price as string || '0'));
   const polyNo = normalizePrice(parseFloat(row.poly_no_price as string || '0'));
   const kalshiYes = normalizePrice(parseFloat(row.kalshi_yes_price as string || '0'));
-  const kalshiNo = normalizePrice(parseFloat(row.kalshi_no_price as string || '0'));
+  // Compute Kalshi NO from YES (DB may have corrupted NO prices from old sync)
+  const kalshiNo = kalshiYes > 0 ? 1 - kalshiYes : 0;
 
   // Check for extreme prices
   const polyExtreme = isExtremePrice(polyYes);
@@ -443,14 +394,25 @@ function transformUserLink(row: Record<string, unknown>): UnifiedPair | null {
   let bestSpread: number | null = null;
   let spreadDirection: string | null = null;
   
+  // Compute Kalshi bids from YES bid (DB may have corrupted NO bids)
+  const kalshiYesBid = normalizePrice(parseFloat(row.kalshi_yes_bid as string || '0'));
+  const kalshiNoBid = kalshiYesBid > 0 ? 1 - kalshiYesBid : 0;
+  
   if (!hasExtremePrice && polyYes > 0 && kalshiYes > 0) {
-    const spreadBuyPolyYes = polyYes > 0 && kalshiNo > 0 ? (1 - polyYes - kalshiNo) : null;
-    const spreadBuyKalshiYes = kalshiYes > 0 && polyNo > 0 ? (1 - kalshiYes - polyNo) : null;
-    
+    const totalFees = getTotalFee('polymarket') + getTotalFee('kalshi');
+    const polyYesBid = normalizePrice(parseFloat(row.poly_yes_bid as string || '0'));
+    const polyNoBid = normalizePrice(parseFloat(row.poly_no_bid as string || '0'));
+    const spreadBuyPolyYes = polyYesBid > 0 && kalshiNoBid > 0
+      ? (1 - polyYesBid - kalshiNoBid) - totalFees
+      : null;
+    const spreadBuyKalshiYes = kalshiYesBid > 0 && polyNoBid > 0
+      ? (1 - kalshiYesBid - polyNoBid) - totalFees
+      : null;
+
     const calcSpread = Math.max(spreadBuyPolyYes || -999, spreadBuyKalshiYes || -999);
-    if (calcSpread > 0) {
+    if (calcSpread >= MIN_NET_SPREAD) {
       bestSpread = calcSpread;
-      spreadDirection = spreadBuyPolyYes !== null && spreadBuyPolyYes >= (spreadBuyKalshiYes || -999) 
+      spreadDirection = spreadBuyPolyYes !== null && spreadBuyPolyYes >= (spreadBuyKalshiYes || -999)
         ? 'buy_poly_yes' : 'buy_kalshi_yes';
     }
   }
@@ -463,6 +425,7 @@ function transformUserLink(row: Record<string, unknown>): UnifiedPair | null {
     polymarket: {
       id: row.poly_id as number,
       platformId: row.poly_platform_id as string,
+      eventId: (row.poly_event_id as string) || null,
       title: row.poly_title as string,
       status: row.poly_status as string,
       yesPrice: polyYes,
@@ -482,10 +445,10 @@ function transformUserLink(row: Record<string, unknown>): UnifiedPair | null {
       status: row.kalshi_status as string,
       yesPrice: kalshiYes,
       noPrice: kalshiNo,
-      yesBid: normalizePrice(parseFloat(row.kalshi_yes_bid as string || '0')),
-      yesAsk: normalizePrice(parseFloat(row.kalshi_yes_ask as string || '0')),
-      noBid: normalizePrice(parseFloat(row.kalshi_no_bid as string || '0')),
-      noAsk: normalizePrice(parseFloat(row.kalshi_no_ask as string || '0')),
+      yesBid: kalshiYesBid,
+      yesAsk: kalshiYesBid > 0 ? kalshiYesBid * 1.01 : 0,
+      noBid: kalshiNoBid,
+      noAsk: kalshiNoBid > 0 ? kalshiNoBid * 1.01 : 0,
       volume24h: parseFloat(row.kalshi_volume_24h as string || '0'),
       volumeAllTime: parseFloat(row.kalshi_volume_all_time as string || '0'),
       snapshotAt: row.kalshi_snapshot_at as string || null,
@@ -536,11 +499,12 @@ async function getSuggestions(request: NextRequest): Promise<NextResponse> {
   const polyMarkets = await query<{
     id: number;
     platform_id: string;
+    event_id: string | null;
     title: string;
     yes_price: string | null;
     volume_all_time: string | null;
   }>(`
-    SELECT m.id, m.platform_id, m.title, ps.yes_price, ps.volume_all_time
+    SELECT m.id, m.platform_id, m.event_id, m.title, ps.yes_price, ps.volume_all_time
     FROM markets m
     LEFT JOIN LATERAL (
       SELECT yes_price, volume_all_time FROM price_snapshots 
@@ -577,7 +541,7 @@ async function getSuggestions(request: NextRequest): Promise<NextResponse> {
 
   // Build suggestions
   const suggestions: Array<{
-    polyMarket: { id: number; platformId: string; title: string; yesPrice: number; volume: number };
+    polyMarket: { id: number; platformId: string; eventId?: string | null; title: string; yesPrice: number; volume: number };
     kalshiCandidates: Array<{ id: number; platformId: string; title: string; yesPrice: number; volume: number; score: number }>;
   }> = [];
 
@@ -595,6 +559,7 @@ async function getSuggestions(request: NextRequest): Promise<NextResponse> {
         polyMarket: {
           id: poly.id,
           platformId: poly.platform_id,
+          eventId: poly.event_id,
           title: poly.title,
           yesPrice: normalizePrice(parseFloat(poly.yes_price || '0')),
           volume: parseFloat(poly.volume_all_time || '0'),

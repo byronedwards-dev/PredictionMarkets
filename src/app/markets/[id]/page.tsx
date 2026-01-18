@@ -160,7 +160,7 @@ export default function MarketDetailPage() {
   const yesPrice = current ? parseFloat(current.yes_price) : 0;
   const noPrice = current ? parseFloat(current.no_price) : 0;
   const volume24h = current ? parseFloat(current.volume_24h || '0') : 0;
-  const volumeAllTime = current ? parseFloat(current.volume_all_time || '0') : 0;
+  const volumeAllTime = current?.volume_all_time ? parseFloat(current.volume_all_time) : null;
 
   return (
     <div className="min-h-screen">
@@ -215,10 +215,10 @@ export default function MarketDetailPage() {
             <a
               href={
                 market.platform === 'polymarket'
-                  ? (market.event_id 
-                      ? `https://polymarket.com/event/${market.event_id}`
+                  ? (market.platform_id 
+                      ? `https://polymarket.com/market/${market.platform_id}`
                       : `https://polymarket.com/markets?query=${encodeURIComponent(market.title)}`)
-                  : `https://kalshi.com/markets/${market.platform_id}`
+                  : `https://kalshi.com/markets/${market.platform_id?.split('-')[0]?.toLowerCase() || ''}`
               }
               target="_blank"
               rel="noopener noreferrer"
@@ -265,7 +265,7 @@ export default function MarketDetailPage() {
               All-Time Volume
             </div>
             <div className="text-2xl font-display font-bold text-gray-300">
-              {formatVolume(volumeAllTime)}
+              {volumeAllTime !== null ? formatVolume(volumeAllTime) : 'N/A'}
             </div>
           </div>
         </div>

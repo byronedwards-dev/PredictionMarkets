@@ -46,6 +46,21 @@ export function CrossPlatformArbCard({ arb }: CrossPlatformArbCardProps) {
   const kalshiYesBid = (details as any).kalshiSnapshot?.yesBid || 0;
   const kalshiNoBid = (details as any).kalshiSnapshot?.noBid || 0;
   
+  // Extract platform IDs for URLs
+  const polyPlatformId = (details as any).polyPlatformId as string | undefined;
+  const kalshiPlatformId = (details as any).kalshiPlatformId as string | undefined;
+  
+  // Build market URLs
+  // Polymarket: Use /market/{platformId} for market slug
+  const polyUrl = polyPlatformId 
+    ? `https://polymarket.com/market/${polyPlatformId}`
+    : 'https://polymarket.com';
+  // Kalshi: Extract series ticker (lowercase first segment) for event page
+  const kalshiSeriesTicker = kalshiPlatformId?.split('-')[0]?.toLowerCase();
+  const kalshiUrl = kalshiSeriesTicker
+    ? `https://kalshi.com/markets/${kalshiSeriesTicker}`
+    : 'https://kalshi.com';
+  
   // Determine buy/sell sides based on direction
   const buyPolyYes = arbDirection === 'poly_yes_kalshi_no';
   const polyBuyPrice = buyPolyYes ? polyYesBid : polyNoBid;
@@ -86,7 +101,16 @@ export function CrossPlatformArbCard({ arb }: CrossPlatformArbCardProps) {
               {/* Polymarket side */}
               <div className="p-3 rounded-lg bg-terminal-bg border border-purple-500/30">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-medium text-purple-400">POLYMARKET</span>
+                  <a 
+                    href={polyUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-xs font-medium text-purple-400 hover:text-purple-300 flex items-center gap-1"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    POLYMARKET
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
                   <span className={cn(
                     'text-xs px-1.5 py-0.5 rounded font-medium',
                     buyPolyYes ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'
@@ -106,7 +130,16 @@ export function CrossPlatformArbCard({ arb }: CrossPlatformArbCardProps) {
               {/* Kalshi side */}
               <div className="p-3 rounded-lg bg-terminal-bg border border-blue-500/30">
                 <div className="flex items-center justify-between mb-2">
-                  <span className="text-xs font-medium text-blue-400">KALSHI</span>
+                  <a 
+                    href={kalshiUrl} 
+                    target="_blank" 
+                    rel="noopener noreferrer"
+                    className="text-xs font-medium text-blue-400 hover:text-blue-300 flex items-center gap-1"
+                    onClick={(e) => e.stopPropagation()}
+                  >
+                    KALSHI
+                    <ExternalLink className="w-3 h-3" />
+                  </a>
                   <span className={cn(
                     'text-xs px-1.5 py-0.5 rounded font-medium',
                     !buyPolyYes ? 'bg-green-500/20 text-green-400' : 'bg-red-500/20 text-red-400'

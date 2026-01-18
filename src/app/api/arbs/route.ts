@@ -36,6 +36,14 @@ export async function GET(request: NextRequest) {
 
     if (active) {
       sql += ` AND a.resolved_at IS NULL`;
+      // Filter out cross-platform arbs where either market is past resolution date
+      sql += ` AND (
+        a.type != 'cross_platform' 
+        OR (
+          (pm.resolution_date IS NULL OR pm.resolution_date > NOW())
+          AND (km.resolution_date IS NULL OR km.resolution_date > NOW())
+        )
+      )`;
     }
 
     if (type) {
